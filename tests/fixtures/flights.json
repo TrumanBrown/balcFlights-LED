@@ -1,0 +1,54 @@
+{
+  "apiVersion": "1.0",
+  "status": "ok",
+  "generatedAt": "2026-07-23T18:30:00.000Z",
+  "source": "adsb.lol",
+  "warnings": [],
+  "count": 3,
+  "flights": [
+    {
+      "identifiers": {
+        "icao24": "a1b2c3",
+        "callsign": "ASA123",
+        "registration": "N123AS"
+      },
+      "airline": {"code": "ASA", "name": "Alaska Airlines"},
+      "aircraft": {"typeCode": "B739", "originCountry": "United States"},
+      "position": {
+        "latitude": 47.625,
+        "longitude": -122.305,
+        "altitudeFeet": 12000,
+        "onGround": false
+      },
+      "movement": {
+        "speedKnots": 230,
+        "headingDegrees": 180,
+        "verticalRateFeetPerMinute": -500
+      },
+      "signal": {"seenSecondsAgo": 1, "dataSource": "ADSB.lol"}
+    },
+    {
+      "identifiers": {"icao24": "d4e5f6", "callsign": null, "registration": "N456XY"},
+      "airline": {"code": null, "name": "Unknown"},
+      "aircraft": {"typeCode": null, "originCountry": null},
+      "position": {
+        "latitude": 47.7,
+        "longitude": -122.4,
+        "altitudeFeet": null,
+        "onGround": false
+      },
+      "movement": {
+        "speedKnots": null,
+        "headingDegrees": null,
+        "verticalRateFeetPerMinute": null
+      },
+      "signal": {"seenSecondsAgo": null, "dataSource": "airplanes.live"}
+    },
+    {
+      "identifiers": {"icao24": "bad001", "callsign": "BADPOS", "registration": null},
+      "position": {"latitude": null, "longitude": null, "onGround": false},
+      "movement": {},
+      "signal": {"seenSecondsAgo": 1}
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+[location]
+# Public center of the Seattle Balc API's default monitoring bounds.
+latitude = 47.6175
+longitude = -122.305
+search_radius_nautical_miles = 20.0
+
+[api]
+endpoint = "https://seattlebalc.com/api/v1/flights"
+timeout_seconds = 10.0
+refresh_seconds = 30.0
+maximum_seen_seconds = 60.0
+last_known_ttl_seconds = 300.0
+
+[display]
+renderer = "console"
+page_seconds = 2.0
+
+[matrix]
+spi_port = 0
+spi_device = 0
+cascaded = 4
+block_orientation = -90
+rotate = 0
+reverse_order = false
+contrast = 64

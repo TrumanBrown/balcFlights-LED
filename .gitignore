@@ -1,0 +1,15 @@
+.env
+.venv/
+balc.local.toml
+reference/
+Seattle_Balc-main.zip
+
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
