@@ -10,6 +10,8 @@ from typing import Any
 from .api import DEFAULT_ENDPOINT
 from .models import Coordinates
 
+SUPPORTED_SPI_SPEEDS_HZ = (500_000, 1_000_000, 2_000_000, 4_000_000, 8_000_000)
+
 
 @dataclass(frozen=True, slots=True)
 class ApiSettings:
@@ -48,6 +50,7 @@ class DisplaySettings:
 class MatrixSettings:
     spi_port: int = 0
     spi_device: int = 0
+    spi_speed_hz: int = 500_000
     cascaded: int = 4
     block_orientation: int = -90
     rotate: int = 0
@@ -57,6 +60,9 @@ class MatrixSettings:
     def __post_init__(self) -> None:
         if self.spi_port < 0 or self.spi_device < 0:
             raise ValueError("matrix SPI port and device cannot be negative")
+        if self.spi_speed_hz not in SUPPORTED_SPI_SPEEDS_HZ:
+            supported = ", ".join(str(speed) for speed in SUPPORTED_SPI_SPEEDS_HZ)
+            raise ValueError(f"matrix.spi_speed_hz must be one of: {supported}")
         if self.cascaded <= 0:
             raise ValueError("matrix.cascaded must be greater than 0")
         if self.block_orientation not in {-90, 0, 90, 180}:
@@ -152,6 +158,13 @@ def load_settings(
         matrix=MatrixSettings(
             spi_port=_int_value(environment, "BFL_SPI_PORT", matrix, "spi_port", 0),
             spi_device=_int_value(environment, "BFL_SPI_DEVICE", matrix, "spi_device", 0),
+            spi_speed_hz=_int_value(
+                environment,
+                "BFL_SPI_SPEED_HZ",
+                matrix,
+                "spi_speed_hz",
+                500_000,
+            ),
             cascaded=_int_value(environment, "BFL_CASCADED", matrix, "cascaded", 4),
             block_orientation=_int_value(
                 environment,

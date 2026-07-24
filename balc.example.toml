@@ -18,6 +18,7 @@ page_seconds = 2.0
 [matrix]
 spi_port = 0
 spi_device = 0
+spi_speed_hz = 500000
 cascaded = 4
 block_orientation = -90
 rotate = 0

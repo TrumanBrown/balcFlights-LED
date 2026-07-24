@@ -39,7 +39,12 @@ class Max7219Renderer:
                 "MAX7219 dependencies are missing; install the project hardware dependencies"
             ) from error
 
-        serial = spi(port=settings.spi_port, device=settings.spi_device, gpio=noop())
+        serial = spi(
+            port=settings.spi_port,
+            device=settings.spi_device,
+            gpio=noop(),
+            bus_speed_hz=settings.spi_speed_hz,
+        )
         self._device = max7219(
             serial,
             cascaded=settings.cascaded,

@@ -29,7 +29,11 @@ class ConfigTests(unittest.TestCase):
 
             settings = load_settings(
                 path,
-                environ={"BFL_LATITUDE": "47.6175", "BFL_CONTRAST": "32"},
+                environ={
+                    "BFL_LATITUDE": "47.6175",
+                    "BFL_CONTRAST": "32",
+                    "BFL_SPI_SPEED_HZ": "1000000",
+                },
             )
 
         self.assertEqual(settings.location.latitude, 47.6175)
@@ -37,6 +41,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.display.renderer, "matrix")
         self.assertEqual(settings.matrix.rotate, 2)
         self.assertEqual(settings.matrix.contrast, 32)
+        self.assertEqual(settings.matrix.spi_speed_hz, 1_000_000)
 
     def test_rejects_polling_faster_than_public_cache(self) -> None:
         with self.assertRaisesRegex(ValueError, "20-second cache"):
@@ -51,6 +56,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.location.latitude, 47.6175)
         self.assertEqual(settings.location.longitude, -122.305)
         self.assertEqual(settings.matrix.cascaded, 4)
+        self.assertEqual(settings.matrix.spi_speed_hz, 500_000)
         self.assertEqual(settings.matrix.block_orientation, -90)
         self.assertEqual(settings.matrix.rotate, 0)
 

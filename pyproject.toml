@@ -17,6 +17,9 @@ dependencies = [
 dev = [
     "ruff>=0.12,<1",
 ]
+recovery = [
+    "RPi.GPIO>=0.7.1,<0.8",
+]
 
 [project.scripts]
 balc-flights-led = "balc_flights_led.cli:main"
