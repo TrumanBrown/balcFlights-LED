@@ -1,10 +1,10 @@
-"""Hand-verified known-good MAX7219 baseline for this Pi.
+"""Hand-verified known-good MAX7219 baseline.
 
 Written and confirmed working directly on the hardware. Treat it as the
 reference any driver change must still satisfy: SPI0/CE0 with luma's default
 bus speed and contrast, four cascaded blocks, block_orientation -90.
 
-    .venv/bin/python tools/no-ai-matrix-test.py
+    .venv/bin/python tools/matrix_baseline.py
 """
 
 import time

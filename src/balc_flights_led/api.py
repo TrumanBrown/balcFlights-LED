@@ -12,7 +12,9 @@ from .models import BoundingBox, Coordinates, Flight
 
 EXPECTED_API_MAJOR_VERSION = "1"
 DEFAULT_ENDPOINT = "https://seattlebalc.com/api/v1/flights"
-USER_AGENT = "balcFlights-LED/0.1 (+https://github.com/trumanbrown/balcFlights-LED)"
+USER_AGENT = "balcFlights-LED/0.1 (+https://github.com/TrumanBrown/balcFlights-LED)"
+# The feed is a small JSON document; anything larger is treated as hostile.
+MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
 
 
 class FlightApiError(RuntimeError):
@@ -62,11 +64,14 @@ class FlightApiClient:
 
         try:
             with self._opener(request, timeout=self._timeout_seconds) as response:
-                body = response.read()
+                body = response.read(MAXIMUM_RESPONSE_BYTES + 1)
         except HTTPError as error:
             raise FlightApiError(f"flight API returned HTTP {error.code}") from error
         except (TimeoutError, URLError, OSError) as error:
             raise FlightApiError(f"flight API request failed: {error}") from error
+
+        if len(body) > MAXIMUM_RESPONSE_BYTES:
+            raise FlightApiContractError("flight API response exceeded the maximum accepted size")
 
         try:
             payload = json.loads(body)

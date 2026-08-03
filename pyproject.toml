@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=66", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,10 +8,24 @@ version = "0.1.0"
 description = "Show the nearest Seattle Balc flight on a Raspberry Pi MAX7219 matrix"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["raspberry-pi", "max7219", "led-matrix", "adsb", "flight-tracking"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: System :: Hardware",
+]
 dependencies = [
     "luma.led_matrix>=1.7.1,<2",
     "spidev>=3.6,<4; platform_system == 'Linux'",
 ]
+
+[project.urls]
+Homepage = "https://github.com/TrumanBrown/balcFlights-LED"
+Issues = "https://github.com/TrumanBrown/balcFlights-LED/issues"
 
 [project.optional-dependencies]
 dev = [
@@ -27,6 +41,9 @@ balc-flights-led = "balc_flights_led.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 target-version = "py311"

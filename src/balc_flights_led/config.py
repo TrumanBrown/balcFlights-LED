@@ -128,13 +128,13 @@ def load_settings(
 
     return Settings(
         location=Coordinates(
-            latitude=_float_value(environment, "BFL_LATITUDE", location, "latitude", 47.6175),
+            latitude=_float_value(environment, "BFL_LATITUDE", location, "latitude", 47.6205),
             longitude=_float_value(
                 environment,
                 "BFL_LONGITUDE",
                 location,
                 "longitude",
-                -122.305,
+                -122.3493,
             ),
         ),
         search_radius_nautical_miles=_float_value(

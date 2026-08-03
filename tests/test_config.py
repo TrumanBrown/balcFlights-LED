@@ -30,13 +30,13 @@ class ConfigTests(unittest.TestCase):
             settings = load_settings(
                 path,
                 environ={
-                    "BFL_LATITUDE": "47.6175",
+                    "BFL_LATITUDE": "47.6205",
                     "BFL_CONTRAST": "32",
                     "BFL_SPI_SPEED_HZ": "1000000",
                 },
             )
 
-        self.assertEqual(settings.location.latitude, 47.6175)
+        self.assertEqual(settings.location.latitude, 47.6205)
         self.assertEqual(settings.location.longitude, -122.3)
         self.assertEqual(settings.display.renderer, "matrix")
         self.assertEqual(settings.matrix.rotate, 2)
@@ -50,11 +50,11 @@ class ConfigTests(unittest.TestCase):
                 environ={"BFL_REFRESH_SECONDS": "10"},
             )
 
-    def test_defaults_match_public_api_center_and_known_matrix(self) -> None:
+    def test_defaults_match_documented_values_and_known_matrix(self) -> None:
         settings = load_settings(Path("does-not-exist.toml"), environ={})
 
-        self.assertEqual(settings.location.latitude, 47.6175)
-        self.assertEqual(settings.location.longitude, -122.305)
+        self.assertEqual(settings.location.latitude, 47.6205)
+        self.assertEqual(settings.location.longitude, -122.3493)
         self.assertEqual(settings.overhead_radius_nautical_miles, 3.0)
         self.assertTrue(settings.display.animations)
         self.assertEqual(settings.matrix.cascaded, 4)

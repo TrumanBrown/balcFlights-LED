@@ -1,9 +1,16 @@
+# Local configuration and secrets
 .env
-.venv/
+.env.*
 balc.local.toml
-reference/
-Seattle_Balc-main.zip
 
+# Local-only reference material, never published
+reference/
+*.zip
+
+# Environments
+.venv/
+
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/

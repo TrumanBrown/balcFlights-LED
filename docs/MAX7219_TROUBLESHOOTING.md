@@ -5,7 +5,7 @@ Last confirmed working: 2026-08-02
 
 ## Current Status: Working
 
-The 32x8 chain renders text, scrolls messages, and blanks reliably on SPI0/CE0. The configuration that established this is [tools/no-ai-matrix-test.py](../tools/no-ai-matrix-test.py):
+The 32x8 chain renders text, scrolls messages, and blanks reliably on SPI0/CE0. The configuration that established this is [tools/matrix_baseline.py](../tools/matrix_baseline.py):
 
 ```python
 serial = spi(port=0, device=0, gpio=noop())
@@ -79,8 +79,7 @@ Provide local decoupling at the matrix: at least 100 nF ceramic plus 10 uF bulk 
 2. Run the known-good baseline:
 
    ```bash
-   cd ~/projects/new/balcFlights-LED
-   .venv/bin/python tools/no-ai-matrix-test.py
+   .venv/bin/python tools/matrix_baseline.py
    ```
 
    Expected: a border box, then `ABCD`, then `Hello world` scrolling. If this fails, the fault is hardware or environment, not application code.

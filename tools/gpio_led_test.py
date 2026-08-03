@@ -15,7 +15,6 @@ The resistor is mandatory. A bare LED across 3.3 V draws far more than the
 
 At 220 ohm a red LED draws about 6 mA, comfortably inside spec.
 
-    cd ~/projects/new/balcFlights-LED
     .venv/bin/python tools/gpio_led_test.py
     .venv/bin/python tools/gpio_led_test.py --pin 21 --blinks 10
 """

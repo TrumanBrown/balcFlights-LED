@@ -1,8 +1,26 @@
 # balcFlights-LED
 
+[![CI](https://github.com/TrumanBrown/balcFlights-LED/actions/workflows/ci.yml/badge.svg)](https://github.com/TrumanBrown/balcFlights-LED/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
+
 Display the aircraft currently overhead on a four-module MAX7219 LED matrix attached to a Raspberry Pi 4.
 
-The application consumes the public, read-only [Seattle Balc Flights API](https://seattlebalc.com/api/v1/flights), computes great-circle distance and bearing from a configured reference point, and drives a 32x8 monochrome matrix.
+The application consumes the public, read-only [Seattle Balc Flights API](https://seattlebalc.com/api), computes great-circle distance and bearing from a configured reference point, and drives a 32x8 monochrome matrix.
+
+> **Attribution.** [seattlebalc.com](https://seattlebalc.com/) is a third-party service that this project is not affiliated with, endorsed by, or maintained by. This repository is an independent client that only issues HTTPS GET requests to that documented public endpoint. No API key is required, and responses are cached upstream for 20 seconds, so the polling interval is floored at 20 seconds to avoid aggressive requests. If the API changes or goes away, this project stops working. Point `api.endpoint` at any service that returns the same contract.
+
+## Contents
+
+- [What The Matrix Shows](#what-the-matrix-shows)
+- [Hardware Profile](#hardware-profile)
+- [Setup](#setup)
+- [Configuration](#configuration)
+- [Run](#run)
+- [Hardware Checks](#hardware-checks)
+- [Project Structure](#project-structure)
+- [Tests And Quality](#tests-and-quality)
+- [License](#license)
 
 ## What The Matrix Shows
 
@@ -48,7 +66,7 @@ Set `display.animations = false` to suppress the arrival sprite and show content
 
 ## Hardware Profile
 
-The display is four daisy-chained MAX7219 8x8 modules, giving a 32x8 monochrome matrix on hardware SPI0/CE0. This profile is **verified working on this Pi**:
+The display is four daisy-chained MAX7219 8x8 modules, giving a 32x8 monochrome matrix on hardware SPI0/CE0. This profile is **verified working on a Raspberry Pi 4 Model B**:
 
 ```toml
 [matrix]
@@ -62,7 +80,7 @@ reverse_order = false
 contrast = 64
 ```
 
-[tools/no-ai-matrix-test.py](tools/no-ai-matrix-test.py) is the hand-verified baseline that established this configuration. It uses luma's default bus speed and contrast rather than the values above; both work. Any driver change must still pass that script.
+[tools/matrix_baseline.py](tools/matrix_baseline.py) is the hand-verified baseline that established this configuration. It uses luma's default bus speed and contrast rather than the values above; both work. Any driver change must still pass that script.
 
 Pin mapping for SPI0/CE0:
 
@@ -80,21 +98,22 @@ See [MAX7219 hardware troubleshooting](docs/MAX7219_TROUBLESHOOTING.md) for the 
 
 ## Setup
 
-Python 3.11 and SPI are already available on the target Pi. Keep this project isolated from historical environments:
+Requires Python 3.11+ and an SPI-enabled Raspberry Pi (`sudo raspi-config` → Interface Options → SPI). Enable SPI before installing, and add your user to the `spi` group if `/dev/spidev0.0` is not readable.
 
 ```bash
-cd ~/projects/new/balcFlights-LED
+git clone https://github.com/TrumanBrown/balcFlights-LED.git
+cd balcFlights-LED
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev]'
 cp balc.example.toml balc.local.toml
 ```
 
-`balc.local.toml`, `.venv`, the supplied site archive, and its extracted `reference/` tree are intentionally ignored by Git.
+`balc.local.toml`, `.venv`, and the local `reference/` tree are intentionally ignored by Git, so your own coordinates are never committed.
 
 ## Configuration
 
-The current local configuration uses the API's public default center at `47.6175, -122.305`. To use a different reference point, edit only `balc.local.toml` or set environment variables:
+The shipped default reference point is the Space Needle at `47.6205, -122.3493`. Set your own vantage point in `balc.local.toml`, which is gitignored so a personal location never reaches version control. Environment variables override both:
 
 ```text
 BFL_LATITUDE
@@ -131,7 +150,6 @@ The refresh interval cannot be set below 20 seconds because the public API adver
 One file starts the live display:
 
 ```bash
-cd ~/projects/new/balcFlights-LED
 .venv/bin/python run.py
 ```
 
@@ -222,8 +240,28 @@ Two standalone scripts remain in `tools/` for cases where the package itself is 
 
 | Script | Purpose |
 | --- | --- |
-| [tools/no-ai-matrix-test.py](tools/no-ai-matrix-test.py) | Hand-verified known-good baseline with no dependency on this package. Run it first if anything looks wrong. |
+| [tools/matrix_baseline.py](tools/matrix_baseline.py) | Hand-verified known-good baseline with no dependency on this package. Run it first if anything looks wrong. |
 | [tools/gpio_led_test.py](tools/gpio_led_test.py) | Blink an LED on an unrelated GPIO to prove the SoC survived a wiring incident. |
+
+## Project Structure
+
+```text
+src/balc_flights_led/
+  api.py           HTTPS client and strict parser for the public flight feed
+  config.py        TOML + environment configuration with validation
+  models.py        Coordinates, Flight, BoundingBox, NearestFlight
+  selection.py     Great-circle distance, bearing, bounding box, nearest pick
+  service.py       Polling loop, staleness, and fresh/degraded/offline states
+  presentation.py  Renderer-independent frames: headline, marquee, animations
+  display.py       MAX7219 and console renderers
+  cli.py           Argument parsing and entry point
+run.py             Convenience launcher for the live display
+tools/             Standalone hardware scripts, independent of the package
+tests/             Unit tests plus the run_tests.py hardware phase runner
+docs/              Hardware troubleshooting notes
+```
+
+Presentation is deliberately separated from rendering: `presentation.py` produces frames as plain data, so the console and matrix renderers stay interchangeable and the visuals are testable without hardware.
 
 ## Tests And Quality
 
@@ -237,6 +275,12 @@ The test suite covers geodesic selection, nullable API fields, major-version rej
 
 ## API Reference
 
-`reference/` is retained for offline reading of the API shape and the upstream `luma.led_matrix` source. It is **not** needed at runtime: the application only issues HTTPS GET requests to the public endpoint. Both `reference/` and the zip are gitignored, so they never affect the published repository.
+The upstream contract is documented publicly at [seattlebalc.com/api](https://seattlebalc.com/api). This client targets API major version 1 and rejects any other major version rather than guessing at an unknown schema.
 
-The user-supplied `Seattle_Balc-main.zip` was integrity-checked and extracted to the ignored `reference/Seattle_Balc-main/` directory for local API review. This repository does not republish the friend's dashboard source. The consumer contract is documented publicly at [seattlebalc.com](https://seattlebalc.com/API.md).
+A local `reference/` directory is gitignored and used only for offline reading of the upstream `luma.led_matrix` source. It is **not** needed at runtime and is never published here; the application only issues HTTPS GET requests to the configured endpoint.
+
+## License
+
+Released under the [MIT License](LICENSE).
+
+This project is not affiliated with seattlebalc.com, Alaska Airlines, or any other operator whose flights it displays. Aircraft data originates from third-party ADS-B sources and is provided without warranty. It is intended for hobbyist and informational use, and must not be relied upon for navigation, flight safety, or any operational decision.

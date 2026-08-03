@@ -1,7 +1,7 @@
 [location]
-# Public center of the Seattle Balc API's default monitoring bounds.
-latitude = 47.6175
-longitude = -122.305
+# Neutral default: the Space Needle. Replace with your own vantage point.
+latitude = 47.6205
+longitude = -122.3493
 search_radius_nautical_miles = 20.0
 # Inside this radius an aircraft counts as overhead: it gets the arrival
 # animation and a dashed marker along the bottom row.

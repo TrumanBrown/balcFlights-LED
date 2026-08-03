@@ -35,7 +35,7 @@ class ServiceTests(unittest.TestCase):
         self.clock = lambda: self.now
         self.settings = load_settings(environ={})
         self.flight = Flight(
-            position=Coordinates(47.625, -122.305),
+            position=Coordinates(47.628, -122.3493),
             callsign="ASA123",
             seen_seconds_ago=1,
         )
@@ -67,7 +67,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_arrival_animation_plays_only_when_the_aircraft_changes(self) -> None:
         other = Flight(
-            position=Coordinates(47.63, -122.305),
+            position=Coordinates(47.633, -122.3493),
             callsign="DAL456",
             seen_seconds_ago=1,
         )

@@ -12,7 +12,7 @@ from balc_flights_led.selection import (
 
 class SelectionTests(unittest.TestCase):
     def setUp(self) -> None:
-        self.origin = Coordinates(latitude=47.6175, longitude=-122.305)
+        self.origin = Coordinates(latitude=47.6205, longitude=-122.3493)
 
     def test_one_latitude_minute_is_about_one_nautical_mile(self) -> None:
         destination = Coordinates(
@@ -31,23 +31,23 @@ class SelectionTests(unittest.TestCase):
         flights = [
             Flight(
                 callsign="GROUND1",
-                position=Coordinates(47.618, -122.305),
+                position=Coordinates(47.621, -122.3493),
                 on_ground=True,
                 seen_seconds_ago=1,
             ),
             Flight(
                 callsign="STALE1",
-                position=Coordinates(47.619, -122.305),
+                position=Coordinates(47.622, -122.3493),
                 seen_seconds_ago=61,
             ),
             Flight(
                 callsign="FAR123",
-                position=Coordinates(47.65, -122.305),
+                position=Coordinates(47.653, -122.3493),
                 seen_seconds_ago=1,
             ),
             Flight(
                 callsign="NEAR12",
-                position=Coordinates(47.625, -122.305),
+                position=Coordinates(47.628, -122.3493),
                 seen_seconds_ago=2,
             ),
         ]

@@ -19,7 +19,7 @@ class PresentationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.nearest = NearestFlight(
             flight=Flight(
-                position=Coordinates(47.625, -122.305),
+                position=Coordinates(47.628, -122.3493),
                 callsign="asa123",
                 aircraft_type="B739",
                 altitude_feet=12_000,

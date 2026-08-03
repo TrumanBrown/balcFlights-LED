@@ -15,8 +15,8 @@
       "airline": {"code": "ASA", "name": "Alaska Airlines"},
       "aircraft": {"typeCode": "B739", "originCountry": "United States"},
       "position": {
-        "latitude": 47.625,
-        "longitude": -122.305,
+        "latitude": 47.628,
+        "longitude": -122.3493,
         "altitudeFeet": 12000,
         "onGround": false
       },
