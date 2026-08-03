@@ -53,6 +53,49 @@ class ServiceTests(unittest.TestCase):
         self.assertFalse(state.stale)
         self.assertEqual(state.nearest.flight.callsign if state.nearest else None, "ASA123")
 
+    def test_close_aircraft_is_flagged_overhead(self) -> None:
+        monitor = FlightMonitor(
+            self.settings,
+            FakeClient([feed(self.flight)]),
+            clock=self.clock,
+        )
+
+        state = monitor.refresh()
+
+        self.assertTrue(state.overhead)
+        self.assertIn("OVERHEAD", state.summary)
+
+    def test_arrival_animation_plays_only_when_the_aircraft_changes(self) -> None:
+        other = Flight(
+            position=Coordinates(47.63, -122.305),
+            callsign="DAL456",
+            seen_seconds_ago=1,
+        )
+        monitor = FlightMonitor(
+            self.settings,
+            FakeClient([feed(self.flight), feed(self.flight), feed(other)]),
+            clock=self.clock,
+        )
+
+        first = monitor.refresh()
+        repeat = monitor.refresh()
+        changed = monitor.refresh()
+
+        self.assertEqual(len(first.intro), 1)
+        self.assertEqual(repeat.intro, ())
+        self.assertEqual(len(changed.intro), 1)
+        self.assertEqual(changed.intro[0].text, "DAL456")
+
+    def test_animations_can_be_disabled(self) -> None:
+        settings = load_settings(environ={"BFL_ANIMATIONS": "false"})
+        monitor = FlightMonitor(
+            settings,
+            FakeClient([feed(self.flight)]),
+            clock=self.clock,
+        )
+
+        self.assertEqual(monitor.refresh().intro, ())
+
     def test_degraded_empty_feed_uses_recent_last_known_flight(self) -> None:
         monitor = FlightMonitor(
             self.settings,

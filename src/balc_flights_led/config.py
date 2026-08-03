@@ -11,6 +11,9 @@ from .api import DEFAULT_ENDPOINT
 from .models import Coordinates
 
 SUPPORTED_SPI_SPEEDS_HZ = (500_000, 1_000_000, 2_000_000, 4_000_000, 8_000_000)
+RENDERER_CHOICES = ("console", "matrix", "both")
+# Only 'atari' and 'tiny' are narrow enough to fit a callsign across 32 columns.
+FONT_CHOICES = ("atari", "tiny", "lcd", "cp437", "sinclair")
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,13 +40,25 @@ class ApiSettings:
 @dataclass(frozen=True, slots=True)
 class DisplaySettings:
     renderer: str = "console"
+    font: str = "atari"
     page_seconds: float = 2.0
+    scroll_delay: float = 0.04
+    frame_seconds: float = 0.03
+    animations: bool = True
 
     def __post_init__(self) -> None:
-        if self.renderer not in {"console", "matrix"}:
-            raise ValueError("display.renderer must be 'console' or 'matrix'")
+        if self.renderer not in RENDERER_CHOICES:
+            supported = ", ".join(repr(name) for name in RENDERER_CHOICES)
+            raise ValueError(f"display.renderer must be one of: {supported}")
+        if self.font not in FONT_CHOICES:
+            supported = ", ".join(repr(name) for name in FONT_CHOICES)
+            raise ValueError(f"display.font must be one of: {supported}")
         if self.page_seconds <= 0:
             raise ValueError("display.page_seconds must be greater than 0")
+        if self.scroll_delay < 0:
+            raise ValueError("display.scroll_delay cannot be negative")
+        if self.frame_seconds <= 0:
+            raise ValueError("display.frame_seconds must be greater than 0")
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +92,7 @@ class MatrixSettings:
 class Settings:
     location: Coordinates
     search_radius_nautical_miles: float
+    overhead_radius_nautical_miles: float
     api: ApiSettings
     display: DisplaySettings
     matrix: MatrixSettings
@@ -84,6 +100,10 @@ class Settings:
     def __post_init__(self) -> None:
         if not 0 < self.search_radius_nautical_miles <= 250:
             raise ValueError("location.search_radius_nautical_miles must be between 0 and 250")
+        if not 0 < self.overhead_radius_nautical_miles <= self.search_radius_nautical_miles:
+            raise ValueError(
+                "location.overhead_radius_nautical_miles must be between 0 and the search radius"
+            )
 
 
 def load_settings(
@@ -124,6 +144,13 @@ def load_settings(
             "search_radius_nautical_miles",
             20.0,
         ),
+        overhead_radius_nautical_miles=_float_value(
+            environment,
+            "BFL_OVERHEAD_RADIUS_NM",
+            location,
+            "overhead_radius_nautical_miles",
+            3.0,
+        ),
         api=ApiSettings(
             endpoint=_string_value(
                 environment, "BFL_API_ENDPOINT", api, "endpoint", DEFAULT_ENDPOINT
@@ -151,9 +178,17 @@ def load_settings(
         ),
         display=DisplaySettings(
             renderer=_string_value(environment, "BFL_RENDERER", display, "renderer", "console"),
+            font=_string_value(environment, "BFL_FONT", display, "font", "atari"),
             page_seconds=_float_value(
                 environment, "BFL_PAGE_SECONDS", display, "page_seconds", 2.0
             ),
+            scroll_delay=_float_value(
+                environment, "BFL_SCROLL_DELAY", display, "scroll_delay", 0.04
+            ),
+            frame_seconds=_float_value(
+                environment, "BFL_FRAME_SECONDS", display, "frame_seconds", 0.03
+            ),
+            animations=_bool_value(environment, "BFL_ANIMATIONS", display, "animations", True),
         ),
         matrix=MatrixSettings(
             spi_port=_int_value(environment, "BFL_SPI_PORT", matrix, "spi_port", 0),

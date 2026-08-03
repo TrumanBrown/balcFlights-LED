@@ -55,10 +55,33 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(settings.location.latitude, 47.6175)
         self.assertEqual(settings.location.longitude, -122.305)
+        self.assertEqual(settings.overhead_radius_nautical_miles, 3.0)
+        self.assertTrue(settings.display.animations)
         self.assertEqual(settings.matrix.cascaded, 4)
         self.assertEqual(settings.matrix.spi_speed_hz, 500_000)
         self.assertEqual(settings.matrix.block_orientation, -90)
         self.assertEqual(settings.matrix.rotate, 0)
+
+    def test_overhead_radius_cannot_exceed_search_radius(self) -> None:
+        with self.assertRaisesRegex(ValueError, "overhead_radius_nautical_miles"):
+            load_settings(
+                Path("does-not-exist.toml"),
+                environ={"BFL_SEARCH_RADIUS_NM": "5", "BFL_OVERHEAD_RADIUS_NM": "10"},
+            )
+
+    def test_renderer_accepts_both_and_rejects_unknown_values(self) -> None:
+        settings = load_settings(Path("does-not-exist.toml"), environ={"BFL_RENDERER": "both"})
+        self.assertEqual(settings.display.renderer, "both")
+
+        with self.assertRaisesRegex(ValueError, "display.renderer"):
+            load_settings(Path("does-not-exist.toml"), environ={"BFL_RENDERER": "led"})
+
+    def test_font_defaults_to_atari_and_rejects_unknown_values(self) -> None:
+        settings = load_settings(Path("does-not-exist.toml"), environ={})
+        self.assertEqual(settings.display.font, "atari")
+
+        with self.assertRaisesRegex(ValueError, "display.font"):
+            load_settings(Path("does-not-exist.toml"), environ={"BFL_FONT": "comic-sans"})
 
 
 if __name__ == "__main__":

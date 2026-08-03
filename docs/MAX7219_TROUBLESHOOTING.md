@@ -1,14 +1,28 @@
 # MAX7219 Hardware Troubleshooting
 
-Last investigated: 2026-07-24 on the target Raspberry Pi 4
+Last investigated: 2026-07-24
+Last confirmed working: 2026-08-02
 
-## Current Conclusion
+## Current Status: Working
 
-The current no-response state is outside the application, font, orientation, Python environment, Luma version, and Linux SPI controller.
+The 32x8 chain renders text, scrolls messages, and blanks reliably on SPI0/CE0. The configuration that established this is [tools/no-ai-matrix-test.py](../tools/no-ai-matrix-test.py):
 
-Earlier tests produced scrolling and visible pixels, but later commands left a latched garbled pattern and stopped producing any physical change. That transition is characteristic of an intermittent electrical connection or marginal logic levels, not an orientation setting.
+```python
+serial = spi(port=0, device=0, gpio=noop())
+device = max7219(serial, cascaded=4, block_orientation=-90, blocks_arranged_in_reverse_order=False)
+```
 
-Upstream Luma documentation explicitly warns that:
+That script leaves `bus_speed_hz` and `contrast` at luma's defaults (8 MHz, `0x70`). The application's committed profile is deliberately more conservative at 500 kHz and contrast 64, and works equally well. Treat the script as the reference: if the application misbehaves but that script does not, the fault is in application code, not wiring.
+
+Notes on the earlier failures:
+
+- `block_orientation` accepts only `0`, `90`, `-90`, `180`. Passing `-180` raises a bare `AssertionError` inside `luma/led_matrix/device.py`.
+- `ImageFont.truetype("examples/pixelmix.ttf", 8)` appears in upstream luma examples and only resolves inside a checkout of `luma.examples`. Use the bundled bitmap fonts from `luma.core.legacy.font` (`TINY_FONT`, `LCD_FONT`, `CP437_FONT`) instead; they need no external files and are sized for 8-pixel rows.
+- A single display-test-disable write did not reliably blank the chain. The repeated blanking sequence is retained for that reason.
+
+## Electrical Hardening
+
+Upstream Luma documentation warns that:
 
 - More than one or two matrices should use a separate regulated 5 V supply with Pi and matrix grounds connected.
 - Pi SPI outputs are 3.3 V, outside the MAX7219's guaranteed 5 V input tolerance, and direct drive causes intermittent behavior.
@@ -17,7 +31,11 @@ Upstream Luma documentation explicitly warns that:
 
 Source: [Luma LED matrix notes](https://luma-led-matrix.readthedocs.io/en/latest/notes.html)
 
-## What Was Verified
+These remain worth doing even though the chain currently works. The 500 kHz clock buys margin that a level shifter would otherwise provide.
+
+## Historical Investigation
+
+Verified while the chain was believed faulty. Still useful if the display regresses.
 
 - Pi model: Raspberry Pi 4 Model B Rev 1.5.
 - Kernel: `6.12.93+rpt-rpi-v8`.
@@ -28,13 +46,16 @@ Source: [Luma LED matrix notes](https://luma-led-matrix.readthedocs.io/en/latest
 - The Pi reports no undervoltage or throttling history.
 - The legacy and current Luma versions have equivalent MAX7219 and SPI implementations.
 - The unchanged legacy script and the new driver both complete without software errors.
-- CE0 and CE1 were each tested at 500 kHz with direct MAX7219 display-test, clear, and shutdown commands; neither produced a visible change.
+- CE0 at 500 kHz visibly controls the display-test register: the matrix goes dark and then lights every LED.
+- A single terminal display-test-disable/clear/shutdown sequence did not turn the matrix off.
+- Ten repeated display-test-disable/row-zero/shutdown sequences reliably turned it off and kept it dark.
+- CE1 and earlier CE0 attempts produced inconsistent observations before the repeatable bus test isolated the final-phase issue.
 - A separate slow software-SPI implementation toggled BCM10/11/8 directly and sent ten full clear/shutdown cycles. Hardware SPI pin modes were restored afterward.
-- A reboot did not restore communication.
+- A reboot did not fix the unreliable one-shot behavior.
 
 There is no MAX7219 readback connection, so a successful Linux write only proves bytes reached the Pi's GPIO peripheral. It cannot prove continuity, voltage, or signal quality at the matrix input header.
 
-## Required Wiring Check
+## Reliability Wiring Check
 
 Power the Pi and matrix down before moving wires. Verify against the matrix's **input** header, not its output header:
 
@@ -52,48 +73,52 @@ For logic conversion, prefer a `74AHCT125`, `74HCT125`, or another buffer whose 
 
 Provide local decoupling at the matrix: at least 100 nF ceramic plus 10 uF bulk capacitance near the MAX7219 chain. Keep DIN, CLK, CS/LOAD, and ground leads short. Start with low display contrast.
 
-## Test Order After Wiring
+## Test Order
 
 1. Power-cycle the matrix supply, not merely Linux. The MAX7219 has no reset pin.
-2. Confirm no process owns the bus:
+2. Run the known-good baseline:
+
+   ```bash
+   cd ~/projects/new/balcFlights-LED
+   .venv/bin/python tools/no-ai-matrix-test.py
+   ```
+
+   Expected: a border box, then `ABCD`, then `Hello world` scrolling. If this fails, the fault is hardware or environment, not application code.
+
+3. Confirm no process owns the bus:
 
    ```bash
    fuser /dev/spidev0.0
    ```
 
-3. Run the orientation-independent register test:
+4. Run the orientation-independent register test:
 
    ```bash
-   cd ~/projects/new/balcFlights-LED
-   .venv/bin/python tools/matrix_bus_test.py --speed-hz 500000
+   .venv/bin/python tests/run_tests.py --matrix-only --phase wiring
    ```
 
-   Expected: dark for 3 seconds, every LED on for 5 seconds, then dark.
+   Expected: fully dark, then every LED on, then dark.
 
-4. Only after that sequence works, calibrate text orientation:
+5. Confirm the cascade length, then check every application visual:
 
    ```bash
-   .venv/bin/python tools/matrix_orientation_test.py --speed-hz 500000
+   .venv/bin/python tests/run_tests.py --matrix-only --phase blocks
+   .venv/bin/python tests/run_tests.py --matrix-only --phase visuals
    ```
 
-5. Run one live flight through the matrix:
+6. Run one live flight through the matrix:
 
    ```bash
    .venv/bin/balc-flights-led --config balc.local.toml once --renderer matrix
    ```
 
-## Recovery Utilities
+## Recovery
 
-Normal clear and shutdown:
-
-```bash
-.venv/bin/python tools/clear_matrix.py --speed-hz 500000 --retries 10
-```
-
-`tools/matrix_software_spi_recovery.py` is a last-resort diagnostic that temporarily takes over BCM10/11/8 with `RPi.GPIO`. It is not part of normal operation. After using it, restore BCM8 as idle-high output and BCM10/11 as SPI0 ALT0 before returning to `spidev`.
-
-Install its optional dependency into the project environment before use:
+Clear and shut down a stuck display:
 
 ```bash
-.venv/bin/python -m pip install -e '.[recovery]'
+.venv/bin/python tests/run_tests.py --matrix-only --phase off
 ```
+
+Every phase also blanks the chain in a `finally` block, so an interrupted run
+still leaves the matrix dark.

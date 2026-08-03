@@ -9,7 +9,14 @@ from .api import FlightApiClient, FlightApiError, FlightFeed
 from .config import Settings
 from .display import PageRenderer
 from .models import NearestFlight
-from .presentation import DisplayPage, console_summary, flight_pages, status_pages
+from .presentation import (
+    DisplayItem,
+    arrival_intro,
+    console_summary,
+    flight_pages,
+    idle_pages,
+    status_pages,
+)
 from .selection import bounds_around, nearest_flight
 
 LOGGER = logging.getLogger(__name__)
@@ -18,11 +25,13 @@ LOGGER = logging.getLogger(__name__)
 @dataclass(frozen=True, slots=True)
 class MonitorState:
     kind: str
-    pages: tuple[DisplayPage, ...]
+    pages: tuple[DisplayItem, ...]
     summary: str
+    intro: tuple[DisplayItem, ...] = ()
     source: str | None = None
     nearest: NearestFlight | None = None
     stale: bool = False
+    overhead: bool = False
 
 
 class FlightMonitor:
@@ -39,6 +48,7 @@ class FlightMonitor:
         self._last_nearest: NearestFlight | None = None
         self._last_source: str | None = None
         self._last_success_at: float | None = None
+        self._displayed_label: str | None = None
 
     def refresh(self) -> MonitorState:
         bounds = bounds_around(
@@ -64,9 +74,10 @@ class FlightMonitor:
             warning = "; ".join(feed.warnings) or "degraded flight data"
             return self._fallback_state("degraded", "DATA?", warning)
 
+        self._displayed_label = None
         return MonitorState(
             kind="empty",
-            pages=status_pages("NO FLT"),
+            pages=idle_pages("NO FLT", seconds=self._settings.display.page_seconds * 2),
             summary=(
                 "No eligible airborne flights in the "
                 f"{self._settings.search_radius_nautical_miles:g} NM "
@@ -87,13 +98,29 @@ class FlightMonitor:
         *,
         stale: bool,
     ) -> MonitorState:
+        overhead = nearest.distance_nautical_miles <= self._settings.overhead_radius_nautical_miles
+        proximity = max(
+            0.0,
+            1.0 - nearest.distance_nautical_miles / self._settings.search_radius_nautical_miles,
+        )
+        # The intro only fires when the aircraft on screen actually changes.
+        is_new = nearest.flight.label != self._displayed_label
+        self._displayed_label = nearest.flight.label
+        intro = (
+            arrival_intro(nearest, overhead=overhead)
+            if is_new and self._settings.display.animations
+            else ()
+        )
+        marker = " OVERHEAD" if overhead else ""
         return MonitorState(
             kind="flight",
-            pages=flight_pages(nearest, stale=stale),
-            summary=f"{console_summary(nearest, stale=stale)}; source={source}",
+            pages=flight_pages(nearest, stale=stale, overhead=overhead, proximity=proximity),
+            summary=f"{console_summary(nearest, stale=stale)}; source={source}{marker}",
+            intro=intro,
             source=source,
             nearest=nearest,
             stale=stale,
+            overhead=overhead,
         )
 
     def _fallback_state(self, kind: str, matrix_message: str, reason: str) -> MonitorState:
@@ -109,11 +136,14 @@ class FlightMonitor:
                     kind="stale",
                     pages=state.pages,
                     summary=f"{state.summary}; age={age_seconds:.0f}s; reason={reason}",
+                    intro=state.intro,
                     source=state.source,
                     nearest=state.nearest,
                     stale=True,
+                    overhead=state.overhead,
                 )
 
+        self._displayed_label = None
         return MonitorState(
             kind=kind,
             pages=status_pages(matrix_message),
@@ -131,19 +161,25 @@ def run_forever(
 ) -> None:
     state = monitor.refresh()
     LOGGER.info(state.summary)
+    pending_intro = list(state.intro)
     page_index = 0
     next_refresh_at = clock() + settings.api.refresh_seconds
 
     while True:
-        renderer.render(state.pages[page_index % len(state.pages)])
-        page_index += 1
+        if pending_intro:
+            item = pending_intro.pop(0)
+        else:
+            item = state.pages[page_index % len(state.pages)]
+            page_index += 1
+        renderer.render(item)
 
         remaining = next_refresh_at - clock()
-        if remaining > 0:
+        if not item.self_timed and remaining > 0:
             sleeper(min(settings.display.page_seconds, remaining))
 
         if clock() >= next_refresh_at:
             state = monitor.refresh()
             LOGGER.info(state.summary)
+            pending_intro = list(state.intro)
             page_index = 0
             next_refresh_at = clock() + settings.api.refresh_seconds

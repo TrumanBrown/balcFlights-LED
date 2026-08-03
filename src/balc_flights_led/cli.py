@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 import logging
+import signal
 import time
 from collections.abc import Sequence
 from pathlib import Path
 
 from .api import FlightApiClient
-from .config import Settings, load_settings
-from .display import ConsoleRenderer, Max7219Renderer, PageRenderer
-from .presentation import DisplayPage
+from .config import RENDERER_CHOICES, Settings, load_settings
+from .display import ConsoleRenderer, Max7219Renderer, MultiRenderer, PageRenderer
 from .service import FlightMonitor, run_forever
 
 
@@ -34,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     once = commands.add_parser("once", help="Fetch and display one nearest-flight result")
     once.add_argument(
         "--renderer",
-        choices=("console", "matrix"),
+        choices=RENDERER_CHOICES,
         default="console",
         help="Use console by default so API checks never touch SPI unexpectedly",
     )
@@ -42,16 +42,10 @@ def build_parser() -> argparse.ArgumentParser:
     run = commands.add_parser("run", help="Continuously refresh and display flights")
     run.add_argument(
         "--renderer",
-        choices=("console", "matrix"),
+        choices=RENDERER_CHOICES,
         default=None,
-        help="Override display.renderer from the TOML configuration",
+        help="Override display.renderer; 'both' drives the matrix and prints each frame",
     )
-
-    matrix_test = commands.add_parser(
-        "matrix-test",
-        help="Show short text and cardinal arrows without calling the flight API",
-    )
-    matrix_test.add_argument("--seconds", type=float, default=1.5, help="Seconds per test page")
     return parser
 
 
@@ -65,9 +59,6 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         settings = load_settings(arguments.config)
-        if arguments.command == "matrix-test":
-            return _matrix_test(settings, arguments.seconds)
-
         client = FlightApiClient(
             settings.api.endpoint,
             timeout_seconds=settings.api.timeout_seconds,
@@ -90,12 +81,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 def _once(monitor: FlightMonitor, settings: Settings, renderer_name: str) -> int:
     state = monitor.refresh()
     print(state.summary, flush=True)
-    if renderer_name == "matrix":
+    if renderer_name != "console":
         renderer = _create_renderer(renderer_name, settings)
         try:
-            for page in state.pages:
-                renderer.render(page)
-                time.sleep(settings.display.page_seconds)
+            for item in (*state.intro, *state.pages):
+                renderer.render(item)
+                if not item.self_timed:
+                    time.sleep(settings.display.page_seconds)
         finally:
             renderer.close()
     return 0 if state.kind in {"flight", "stale", "empty"} else 2
@@ -103,40 +95,27 @@ def _once(monitor: FlightMonitor, settings: Settings, renderer_name: str) -> int
 
 def _run(monitor: FlightMonitor, settings: Settings, renderer_name: str) -> int:
     renderer = _create_renderer(renderer_name, settings)
+    # Without this, SIGTERM skips the finally block and leaves the matrix lit.
+    previous_handler = signal.signal(signal.SIGTERM, _interrupt)
     try:
         run_forever(monitor, renderer, settings)
     except KeyboardInterrupt:
         logging.getLogger(__name__).info("Stopping flight display")
     finally:
+        signal.signal(signal.SIGTERM, previous_handler)
         renderer.close()
     return 0
 
 
-def _matrix_test(settings: Settings, seconds_per_page: float) -> int:
-    if seconds_per_page <= 0:
-        raise ValueError("matrix-test --seconds must be greater than 0")
-
-    renderer = Max7219Renderer(settings.matrix)
-    pages = (
-        DisplayPage("N", bearing_degrees=0),
-        DisplayPage("E", bearing_degrees=90),
-        DisplayPage("S", bearing_degrees=180),
-        DisplayPage("W", bearing_degrees=270),
-        DisplayPage("1234"),
-        DisplayPage("STALE", stale=True),
-    )
-    try:
-        for page in pages:
-            renderer.render(page)
-            time.sleep(seconds_per_page)
-    finally:
-        renderer.close()
-    return 0
+def _interrupt(_signal_number: int, _frame: object) -> None:
+    raise KeyboardInterrupt
 
 
 def _create_renderer(name: str, settings: Settings) -> PageRenderer:
     if name == "console":
         return ConsoleRenderer()
     if name == "matrix":
-        return Max7219Renderer(settings.matrix)
+        return Max7219Renderer(settings.matrix, settings.display)
+    if name == "both":
+        return MultiRenderer(ConsoleRenderer(), Max7219Renderer(settings.matrix, settings.display))
     raise ValueError(f"unsupported renderer: {name}")
