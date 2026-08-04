@@ -5,9 +5,9 @@ from dataclasses import dataclass
 
 from .models import NearestFlight
 
-# Each repeat emits a distance frame and an identity frame, so at the default
-# display.page_seconds this holds the headline for about 12 seconds.
-DEFAULT_HEADLINE_REPEATS = 3
+# The bearing arrow is now permanent, so every headline frame is identical and
+# this simply holds the callsign for about 12 seconds at the default page time.
+DEFAULT_HEADLINE_REPEATS = 6
 
 COMPASS_POINTS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
@@ -22,7 +22,6 @@ class DisplayPage:
 
     text: str
     bearing_degrees: float | None = None
-    trend: int | None = None
     proximity: float | None = None
     stale: bool = False
     overhead: bool = False
@@ -86,11 +85,9 @@ def flight_pages(
         "stale": stale,
         "overhead": overhead,
     }
-    frames = (
-        DisplayPage(bearing_degrees=nearest.bearing_degrees, **common),
-        DisplayPage(trend=trend_value(nearest.flight.vertical_rate_fpm), **common),
-    )
-    return (*frames * max(1, headline_repeats), MarqueePage(detail_line(nearest), stale=stale))
+    headline = DisplayPage(bearing_degrees=nearest.bearing_degrees, **common)
+    repeats = (headline,) * max(1, headline_repeats)
+    return (*repeats, MarqueePage(detail_line(nearest), stale=stale))
 
 
 def arrival_intro(nearest: NearestFlight, *, overhead: bool = False) -> tuple[DisplayItem, ...]:

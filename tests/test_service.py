@@ -35,10 +35,36 @@ class ServiceTests(unittest.TestCase):
         self.clock = lambda: self.now
         self.settings = load_settings(environ={})
         self.flight = Flight(
-            position=Coordinates(47.628, -122.3493),
+            position=Coordinates(47.625, -122.305),
             callsign="ASA123",
             seen_seconds_ago=1,
         )
+
+    def test_reprojection_tracks_the_aircraft_between_polls(self) -> None:
+        inbound = Flight(
+            position=Coordinates(47.70, -122.305),
+            callsign="INBND1",
+            speed_knots=600.0,
+            heading_degrees=180.0,
+            seen_seconds_ago=1,
+        )
+        monitor = FlightMonitor(self.settings, FakeClient([feed(inbound)]), clock=self.clock)
+
+        first = monitor.refresh()
+        self.now += 15.0
+        later = monitor.reproject()
+
+        assert first.nearest is not None
+        assert later is not None and later.nearest is not None
+        self.assertLess(
+            later.nearest.distance_nautical_miles,
+            first.nearest.distance_nautical_miles,
+        )
+
+    def test_reprojection_before_any_fetch_returns_nothing(self) -> None:
+        monitor = FlightMonitor(self.settings, FakeClient([]), clock=self.clock)
+
+        self.assertIsNone(monitor.reproject())
 
     def test_fresh_flight_is_selected_and_cached(self) -> None:
         monitor = FlightMonitor(
@@ -67,7 +93,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_arrival_animation_plays_only_when_the_aircraft_changes(self) -> None:
         other = Flight(
-            position=Coordinates(47.633, -122.3493),
+            position=Coordinates(47.63, -122.305),
             callsign="DAL456",
             seen_seconds_ago=1,
         )

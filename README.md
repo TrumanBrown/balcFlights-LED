@@ -24,35 +24,46 @@ The application consumes the public, read-only [Seattle Balc Flights API](https:
 
 ## What The Matrix Shows
 
-The callsign of the nearest aircraft is on screen at all times. Everything else uses the space the callsign leaves over.
+The callsign of the nearest aircraft occupies the left 24 columns. The rightmost 8x8 block is reserved for a single arrow that points from the reference location to that aircraft.
 
 ```text
-Q X E 2 3 7 2 |^|     callsign (rows 0-5) + indicator cell (right)
-###########...        proximity bar (row 7)
+A S A 1 2 3 |>|      callsign (24px) + bearing arrow (8x8 block)
+###########..        proximity bar (row 7, callsign area)
 ```
 
 | Element | Where | Behaviour |
 | --- | --- | --- |
-| Callsign | Rows 0-5, left | Always visible. Registration or ICAO identifier when there is no callsign. |
-| Proximity bar | Row 7, full width | Longer means closer. Full width is directly overhead, empty is the edge of the search radius. |
-| Indicator cell | Rows 0-5, right of the callsign | Alternates each `display.page_seconds` between the bearing arrow and the climb/level/descent chevrons. |
-| Overhead marker | Indicator cell | The cell inverts to a dark glyph on a lit block while inside `location.overhead_radius_nautical_miles`. |
-| Stale marker | Top-right pixel | Lit when the data is last-known rather than live. |
-| Detail scroll | Full width | Once per cycle: `ASA123 B739 2.4NM SE 5500FT CLB 266KT`. |
+| Callsign | Columns 0-23 | Always visible. Registration or ICAO identifier when there is no callsign. Clipped rather than allowed to reach the arrow. |
+| Bearing arrow | Columns 24-31, rows 0-6 | Points from your configured location toward the aircraft, snapped to the nearest of eight compass directions. |
+| Proximity bar | Row 7, columns 0-23 | Longer means closer. Full width is directly overhead, empty is the edge of the search radius. |
+| Overhead marker | Arrow block | The block inverts to a dark arrow on a lit field while inside `location.overhead_radius_nautical_miles`. |
+| Stale marker | Bottom-right pixel | Lit when the data is last-known rather than live. |
+| Detail scroll | Full width | Once per cycle: `ASA123 B739 2.4NM SE 5500FT CLB 266KT`. Climb, level, and descent are reported here. |
 | Arrival animation | Full width | When the nearest aircraft *changes*, a plane sprite flies past, then the new callsign is revealed column by column. |
 | Idle | Full width | Drifting dots alternating with `NO FLT` when no aircraft qualifies. |
 
-Bearing arrows have a shaft; climb and descent chevrons deliberately do not, so an aircraft to the north never looks like one that is climbing.
+The arrow is drawn from a table of hand-designed sprites, one per compass octant, rather than by rotating a line. At eight pixels across, a rounded arbitrary-angle vector degrades into scattered dots and reads as noise, so direction is quantised to 45° and each direction gets a shape chosen to be unmistakable.
 
-A six-character callsign such as `ASA123` is 24 px, leaving 8 columns for the indicator. A seven-character callsign such as `QXE2372` is 28 px, leaving 4 — enough for a narrower version of the same glyphs. Only a callsign that fills all 32 columns suppresses the indicator entirely.
+Status text such as `OFFLINE` has no bearing to show, so those frames use the full 32 columns instead of reserving the arrow block.
 
 Upstream failures are not presented as quiet airspace. A recent last-known aircraft is marked stale, and expired data becomes an explicit `DATA?` or `OFFLINE` state.
+
+### Staying Current Between Polls
+
+The API advertises `Cache-Control: public, max-age=20`, asks consumers not to poll aggressively, and exposes no `ETag`, so conditional requests are not possible and every poll is a full transfer. Polling harder would therefore cost bandwidth without buying freshness.
+
+Instead, each flight carries a `position.projected` estimate produced by advancing its last observed fix along its reported ground speed and heading. This project uses that projection as the starting point and then **continues the dead reckoning locally**, recomputing distance and bearing on every page rather than only on every fetch. The result is an arrow that keeps tracking between requests.
+
+Local extrapolation honours the same 45-second ceiling the API applies to its own projection, and never extrapolates an aircraft that is on the ground or missing speed or heading. Aircraft also age out mid-window: once the elapsed time pushes a flight past `maximum_seen_seconds`, it stops being a candidate without waiting for the next poll.
+
+A projected position is dead reckoning, not a new observation. It is the right basis for pointing an arrow, and the wrong basis for anything requiring source provenance.
+
 
 Set `display.animations = false` to suppress the arrival sprite and show content changes immediately.
 
 ### Fonts
 
-`display.font` selects the callsign font. The layout adapts automatically: the renderer measures which rows the font inks, lifts the glyphs to the top, and puts the proximity bar in the rows left over.
+`display.font` selects the callsign font. The renderer measures which rows the font inks, lifts the glyphs to the top, and puts the proximity bar in the rows left over. The callsign always has 24 columns, because the arrow block is reserved regardless of font.
 
 | Font | `ASA123` | `QXE2372` | Rows inked | Leaves a bar row |
 | --- | ---: | ---: | ---: | --- |
@@ -62,7 +73,7 @@ Set `display.animations = false` to suppress the arrival sprite and show content
 | `cp437` | 42 px | 51 px | 8 | no |
 | `sinclair` | 41 px | 49 px | 8 | no |
 
-`atari` and `tiny` are the same width, but `atari` uses six rows rather than five, so it is markedly easier to read. The wider fonts will truncate callsigns and leave no room for the bar. The detail scroll always uses `cp437`, because a marquee has unlimited width.
+`atari` and `tiny` both fit a six-character callsign in exactly 24 px, but `atari` uses six rows rather than five, so it is markedly easier to read. Anything longer, and any wider font, is clipped at the arrow boundary. The detail scroll always uses `cp437`, because a marquee has unlimited width.
 
 ## Hardware Profile
 
@@ -92,7 +103,15 @@ Pin mapping for SPI0/CE0:
 | `GND` | Ground | - | 6 or another ground pin |
 | `VCC` | 5V supply | - | 2 or 4 |
 
-Four MAX7219 boards must not be treated like a single low-current Pi accessory. Use a regulated external 5 V supply with adequate current capacity and connect its ground to Pi ground. The Pi's 3.3 V DIN, CLK, and CS/LOAD outputs are below the MAX7219's guaranteed input-high threshold; a `74AHCT125` or equivalent 5 V-powered buffer removes that margin problem. Add local 100 nF ceramic and 10 uF bulk decoupling near the matrix chain. The conservative 500 kHz clock is retained for the same reason.
+Four MAX7219 boards must not be treated like a single low-current Pi accessory. Use a regulated external 5 V supply with adequate current capacity and connect its ground to Pi ground. The Pi's 3.3 V DIN, CLK, and CS/LOAD outputs are below the MAX7219's guaranteed input-high threshold; a `74AHCT125` or equivalent 5 V-powered buffer removes that margin problem. Add local 100 nF ceramic and 10 uF bulk decoupling near the matrix chain.
+
+`spi_speed_hz` accepts 500000, 1000000, 2000000, 4000000, or 8000000. The shipped default stays at the conservative 500 kHz, because it buys the timing margin a level shifter would otherwise provide and nothing about another builder's wiring can be assumed. 1 MHz is verified clean on the reference build and is a safe first step up. Higher clocks are exactly where unbuffered 3.3 V signalling starts to fail, so raise it empirically rather than optimistically:
+
+```bash
+.venv/bin/python tests/run_tests.py --matrix-only --phase speed
+```
+
+That opens the bus once per supported speed, draws static text and a scroll at each, and closes it again. Watch for flicker, dropped blocks, or garbled glyphs, then set `matrix.spi_speed_hz` to the fastest rate that stayed clean. Faster clocks buy smoother scrolling and animation, not extra data.
 
 See [MAX7219 hardware troubleshooting](docs/MAX7219_TROUBLESHOOTING.md) for the diagnostic history and a pin-by-pin recovery procedure.
 
@@ -113,7 +132,7 @@ cp balc.example.toml balc.local.toml
 
 ## Configuration
 
-The shipped default reference point is the Space Needle at `47.6205, -122.3493`. Set your own vantage point in `balc.local.toml`, which is gitignored so a personal location never reaches version control. Environment variables override both:
+The shipped default reference point is the API's own published center at `47.6175, -122.305`. Set your own vantage point in `balc.local.toml`, which is gitignored so a personal location never reaches version control. Environment variables override both:
 
 ```text
 BFL_LATITUDE
@@ -141,9 +160,9 @@ BFL_REVERSE_ORDER
 BFL_CONTRAST
 ```
 
-The refresh interval cannot be set below 20 seconds because the public API advertises `max-age=20`. Aircraft reported on the ground or older than `maximum_seen_seconds` are excluded by default. `overhead_radius_nautical_miles` must be greater than zero and no larger than the search radius.
+The refresh interval defaults to 20 seconds and cannot be set lower, because the public API advertises `max-age=20` and asks consumers not to poll aggressively. Positions are extrapolated locally between polls, so a longer interval costs accuracy only once the 45-second projection ceiling is reached. Aircraft reported on the ground or older than `maximum_seen_seconds` are excluded by default. `overhead_radius_nautical_miles` must be greater than zero and no larger than the search radius.
 
-`scroll_delay` controls the detail marquee, `frame_seconds` controls the arrival and idle animations. Both trade smoothness against SPI bandwidth at 500 kHz.
+`scroll_delay` controls the detail marquee, `frame_seconds` controls the arrival and idle animations. Both trade smoothness against the available SPI bandwidth.
 
 ## Run
 
@@ -153,7 +172,7 @@ One file starts the live display:
 .venv/bin/python run.py
 ```
 
-That polls the API every 30 seconds and drives the matrix until you press Ctrl+C, which blanks it. Nothing else needs to be running.
+That polls the API every 20 seconds and drives the matrix until you press Ctrl+C, which blanks it. Nothing else needs to be running.
 
 `display.renderer` accepts three values, and `--renderer` overrides it:
 
@@ -213,8 +232,14 @@ That runs four phases in order and always blanks the chain on exit:
 | --- | --- |
 | `wiring` | Raw display-test register toggle: dark, every LED on, dark. Proves VCC/GND/DIN/CLK/CS. |
 | `blocks` | Lights each 8x8 block in turn. Proves `matrix.cascaded`. |
-| `visuals` | Every frame the application can draw, including the arrival animation and idle drift. |
+| `visuals` | Every frame the application can draw, including all eight arrow directions, the arrival animation, and idle drift. |
 | `off` | Clears every row and enters shutdown. |
+
+One further phase is opt-in, because it opens and closes the bus once per speed and so cannot share a device with the others:
+
+| Phase | What it proves |
+| --- | --- |
+| `speed` | Steps `spi_speed_hz` through every supported rate so you can see which stay clean. |
 
 Isolate one phase when narrowing something down, or blank a stuck display:
 

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import math
 import string
 import time
 from typing import Any, Protocol
@@ -37,10 +36,87 @@ INK_SAMPLE = string.ascii_uppercase + string.digits
 # Blank rows kept between the callsign and the proximity bar.
 STRIP_GAP = 1
 
-# Proportional fonts already leave a trailing blank column, so the indicator can
-# start immediately after the measured text width. Seven-character callsigns are
-# 28px wide, which leaves exactly this many columns.
-MINIMUM_CELL_WIDTH = 4
+# The rightmost block is reserved for the bearing arrow, leaving 24px of
+# callsign. Hand-drawn sprites are used because an arbitrary-angle arrow rounded
+# into 8 pixels reads as scattered dots rather than a direction.
+ARROW_WIDTH = 8
+ARROW_HEIGHT = 7
+
+# Indexed by compass octant, clockwise from north.
+ARROW_SPRITES = (
+    (  # N
+        "...##...",
+        "..####..",
+        ".######.",
+        "########",
+        "...##...",
+        "...##...",
+        "...##...",
+    ),
+    (  # NE
+        "...#####",
+        "....####",
+        ".....###",
+        "....#...",
+        "...#....",
+        "..#.....",
+        ".#......",
+    ),
+    (  # E
+        "....#...",
+        "....##..",
+        "....###.",
+        "########",
+        "....###.",
+        "....##..",
+        "....#...",
+    ),
+    (  # SE
+        ".#......",
+        "..#.....",
+        "...#....",
+        "....#...",
+        ".....###",
+        "....####",
+        "...#####",
+    ),
+    (  # S
+        "...##...",
+        "...##...",
+        "...##...",
+        "########",
+        ".######.",
+        "..####..",
+        "...##...",
+    ),
+    (  # SW
+        "......#.",
+        ".....#..",
+        "....#...",
+        "...#....",
+        "###.....",
+        "####....",
+        "#####...",
+    ),
+    (  # W
+        "...#....",
+        "..##....",
+        ".###....",
+        "########",
+        ".###....",
+        "..##....",
+        "...#....",
+    ),
+    (  # NW
+        "#####...",
+        "####....",
+        "###.....",
+        "...#....",
+        "....#...",
+        ".....#..",
+        "......#.",
+    ),
+)
 
 # (row, columns per frame, starting column) for the idle drift.
 IDLE_DOTS = ((1, 1, 0), (3, 2, 11), (5, 1, 21), (6, 3, 5))
@@ -76,8 +152,6 @@ class ConsoleRenderer:
         details = [item.text]
         if item.bearing_degrees is not None:
             details.append(f"bearing={item.bearing_degrees:.0f}")
-        if item.trend is not None:
-            details.append({1: "climbing", 0: "level", -1: "descending"}[item.trend])
         if item.proximity is not None:
             details.append(f"proximity={item.proximity:.0%}")
         if item.overhead:
@@ -247,97 +321,44 @@ class Max7219Renderer:
 
     def _draw_page(self, draw: Any, page: DisplayPage) -> None:
         width = self._device.width
-        fitted_text = self._fit_text(page.text, width)
-        text_width, _ = self._textsize(fitted_text, self._font)
+        height = self._device.height
+        has_arrow = page.bearing_degrees is not None
+        # Status text such as OFFLINE needs the whole matrix; only a flight page
+        # gives up the last block to the arrow.
+        text_width = width - ARROW_WIDTH if has_arrow else width
+
+        fitted_text = self._fit_text(page.text, text_width)
         self._text(draw, (0, self._text_y), fitted_text, fill="white", font=self._font)
 
-        if page.stale:
-            draw.point((width - 1, 0), fill="white")
         if page.proximity is not None and self._strip_row is not None:
-            self._draw_proximity_bar(draw, page.proximity)
+            self._draw_proximity_bar(draw, page.proximity, text_width)
+        if page.stale:
+            draw.point((width - 1, height - 1), fill="white")
+        if has_arrow:
+            self._draw_arrow(
+                draw,
+                page.bearing_degrees,
+                width - ARROW_WIDTH,
+                overhead=page.overhead,
+            )
 
-        cell_left = text_width
-        cell_width = width - cell_left - (2 if page.stale else 0)
-        if cell_width >= MINIMUM_CELL_WIDTH:
-            self._draw_indicator(draw, page, cell_left, cell_width)
-
-    def _draw_proximity_bar(self, draw: Any, proximity: float) -> None:
-        lit = round(min(1.0, max(0.0, proximity)) * self._device.width)
+    def _draw_proximity_bar(self, draw: Any, proximity: float, width: int) -> None:
+        lit = round(min(1.0, max(0.0, proximity)) * width)
         if lit > 0:
             draw.line((0, self._strip_row, lit - 1, self._strip_row), fill="white")
 
-    def _draw_indicator(self, draw: Any, page: DisplayPage, left: int, width: int) -> None:
-        bottom = self._glyph_bottom
-        if page.overhead:
-            draw.rectangle((left, 0, left + width - 1, bottom), fill="white")
-        ink = "black" if page.overhead else "white"
-
-        if page.bearing_degrees is not None:
-            self._draw_bearing_arrow(draw, page.bearing_degrees, left, width, bottom, ink)
-        elif page.trend is not None:
-            self._draw_trend(draw, page.trend, left, width, bottom, ink)
-
     @staticmethod
-    def _draw_bearing_arrow(
-        draw: Any,
-        bearing_degrees: float,
-        left: int,
-        width: int,
-        bottom: int,
-        ink: str,
-    ) -> None:
-        center_x = left + (width - 1) / 2
-        center_y = bottom / 2
-        # Separate radii, so a narrow cell still uses the full glyph height.
-        radius_x = (width - 1) / 2
-        radius_y = bottom / 2
+    def _draw_arrow(draw: Any, bearing_degrees: float, left: int, *, overhead: bool) -> None:
+        """Draw the octant arrow pointing from the reference point to the aircraft."""
+        if overhead:
+            draw.rectangle((left, 0, left + ARROW_WIDTH - 1, ARROW_HEIGHT - 1), fill="white")
+        ink = "black" if overhead else "white"
 
-        angle = math.radians(bearing_degrees)
-        along_x, along_y = math.sin(angle), -math.cos(angle)
-        tip_x = round(center_x + along_x * radius_x)
-        tip_y = round(center_y + along_y * radius_y)
-        tail_x = round(center_x - along_x * radius_x)
-        tail_y = round(center_y - along_y * radius_y)
-        draw.line((tail_x, tail_y, tip_x, tip_y), fill=ink)
-
-        # Barbs sit one step back from the tip, perpendicular to the shaft.
-        back_x = tip_x - round(along_x)
-        back_y = tip_y - round(along_y)
-        perpendicular_x, perpendicular_y = round(math.cos(angle)), round(math.sin(angle))
-        for sign in (1, -1):
-            barb_x = back_x + sign * perpendicular_x
-            barb_y = back_y + sign * perpendicular_y
-            if left <= barb_x <= left + width - 1 and 0 <= barb_y <= bottom:
-                draw.point((barb_x, barb_y), fill=ink)
-
-    @staticmethod
-    def _draw_trend(
-        draw: Any,
-        trend: int,
-        left: int,
-        width: int,
-        bottom: int,
-        ink: str,
-    ) -> None:
-        """Stacked chevrons; deliberately shaft-less so they never read as a bearing arrow."""
-        center_x = left + (width - 1) // 2
-        if trend == 0:
-            middle = bottom // 2
-            draw.line((left, middle, left + width - 1, middle), fill=ink)
-            draw.line((left, middle + 2, left + width - 1, middle + 2), fill=ink)
-            return
-
-        step = 1 if trend > 0 else -1
-        apexes = (0, 3) if trend > 0 else (bottom, bottom - 3)
-        arm_offsets = (1, 2) if width >= 5 else (1,)
-        for apex in apexes:
-            draw.point((center_x, apex), fill=ink)
-            for offset in arm_offsets:
-                arm_y = apex + offset * step
-                if center_x - offset >= left:
-                    draw.point((center_x - offset, arm_y), fill=ink)
-                if center_x + offset <= left + width - 1:
-                    draw.point((center_x + offset, arm_y), fill=ink)
+        octant = int((bearing_degrees % 360) / 45 + 0.5) % len(ARROW_SPRITES)
+        for row, pattern in enumerate(ARROW_SPRITES[octant]):
+            for column, cell in enumerate(pattern):
+                if cell == "#":
+                    draw.point((left + column, row), fill=ink)
 
     def _fit_text(self, value: str, available_width: int) -> str:
         fitted = value

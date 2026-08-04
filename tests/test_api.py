@@ -13,7 +13,7 @@ class FlightApiTests(unittest.TestCase):
 
         feed = parse_flight_feed(payload)
 
-        self.assertEqual(feed.api_version, "1.0")
+        self.assertEqual(feed.api_version, "1.1")
         self.assertEqual(feed.status, "ok")
         self.assertEqual(feed.declared_count, 3)
         self.assertEqual(feed.rejected_flights, 1)
@@ -22,6 +22,33 @@ class FlightApiTests(unittest.TestCase):
         self.assertEqual(feed.flights[0].altitude_feet, 12000)
         self.assertEqual(feed.flights[1].label, "N456XY")
         self.assertIsNone(feed.flights[1].altitude_feet)
+
+    def test_parses_the_projected_position(self) -> None:
+        payload = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+        projection = parse_flight_feed(payload).flights[0].projection
+
+        assert projection is not None
+        self.assertEqual(projection.position.latitude, 47.624)
+        self.assertEqual(projection.seconds, 1.0)
+        self.assertFalse(projection.capped)
+        self.assertEqual(projection.method, "constant-speed-heading")
+
+    def test_flights_without_a_projection_still_parse(self) -> None:
+        feed = parse_flight_feed(
+            {
+                "apiVersion": "1.1",
+                "status": "ok",
+                "flights": [
+                    {
+                        "identifiers": {"callsign": "NOPROJ"},
+                        "position": {"latitude": 47.6, "longitude": -122.3, "projected": None},
+                    }
+                ],
+            }
+        )
+
+        self.assertIsNone(feed.flights[0].projection)
 
     def test_degraded_empty_feed_remains_explicit(self) -> None:
         feed = parse_flight_feed(

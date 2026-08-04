@@ -19,7 +19,7 @@ class PresentationTests(unittest.TestCase):
     def setUp(self) -> None:
         self.nearest = NearestFlight(
             flight=Flight(
-                position=Coordinates(47.628, -122.3493),
+                position=Coordinates(47.625, -122.305),
                 callsign="asa123",
                 aircraft_type="B739",
                 altitude_feet=12_000,
@@ -30,24 +30,22 @@ class PresentationTests(unittest.TestCase):
             bearing_degrees=359.7,
         )
 
-    def test_callsign_stays_on_every_frame_while_indicators_rotate(self) -> None:
+    def test_every_headline_frame_keeps_the_callsign_and_bearing(self) -> None:
         pages = flight_pages(
             self.nearest,
             overhead=True,
             proximity=0.8,
-            headline_repeats=2,
+            headline_repeats=3,
         )
 
-        self.assertEqual([page.text for page in pages[:4]], ["ASA123"] * 4)
-        self.assertTrue(all(page.overhead for page in pages[:4]))
-        self.assertTrue(all(page.proximity == 0.8 for page in pages[:4]))
-        self.assertFalse(any(page.self_timed for page in pages[:4]))
+        headline = pages[:3]
+        self.assertEqual([page.text for page in headline], ["ASA123"] * 3)
+        self.assertTrue(all(page.overhead for page in headline))
+        self.assertTrue(all(page.proximity == 0.8 for page in headline))
+        self.assertFalse(any(page.self_timed for page in headline))
 
-        # Frames alternate between the bearing arrow and the climb/descent chevrons.
-        self.assertAlmostEqual(pages[0].bearing_degrees or 0, 359.7)
-        self.assertIsNone(pages[0].trend)
-        self.assertIsNone(pages[1].bearing_degrees)
-        self.assertEqual(pages[1].trend, -1)
+        # The arrow is permanent, so no frame ever drops the bearing.
+        self.assertTrue(all(page.bearing_degrees == 359.7 for page in headline))
 
         marquee = pages[-1]
         self.assertIsInstance(marquee, MarqueePage)

@@ -30,6 +30,9 @@ REG_DISPLAY_TEST = 0x0F
 ROW_REGISTERS = range(1, 9)
 
 PHASES = ("wiring", "blocks", "visuals", "off")
+# Opt-in only: it opens and closes the bus once per speed, so it cannot share
+# the device the other phases hold.
+SPEED_PHASE = "speed"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
             "  blocks   lights each 8x8 block in turn; proves the cascade length\n"
             "  visuals  every frame the application can draw, including animations\n"
             "  off      clears every row and enters shutdown\n"
+            "  speed    steps the SPI clock up so you can confirm the fastest clean rate\n"
         ),
     )
     parser.add_argument(
@@ -56,7 +60,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--phase",
-        choices=PHASES,
+        choices=(*PHASES, SPEED_PHASE),
         help="Run a single hardware phase instead of all of them",
     )
     parser.add_argument("--seconds", type=float, default=1.5, help="Dwell per visual step")
@@ -92,6 +96,17 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
         f"contrast={matrix.contrast})",
         flush=True,
     )
+
+    if SPEED_PHASE in phases:
+        print(f"[{SPEED_PHASE}]", flush=True)
+        try:
+            _phase_speed(settings, seconds)
+        except KeyboardInterrupt:
+            print("\ninterrupted", flush=True)
+        phases = [phase for phase in phases if phase != SPEED_PHASE]
+        if not phases:
+            print("matrix checks are observational; confirm the expectations above", flush=True)
+            return True
 
     renderer = Max7219Renderer(matrix, settings.display)
     device = renderer.device
@@ -168,14 +183,15 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
     items = (
         ArrivalAnimation("TEST", bearing_degrees=45),
         DisplayPage("ASA123", bearing_degrees=0, proximity=0.9),
-        DisplayPage("ASA123", bearing_degrees=90, proximity=0.9),
-        DisplayPage("ASA123", bearing_degrees=180, proximity=0.9),
-        DisplayPage("ASA123", bearing_degrees=270, proximity=0.9),
-        DisplayPage("ASA123", trend=1, proximity=0.6),
-        DisplayPage("ASA123", trend=-1, proximity=0.3),
-        DisplayPage("ASA123", trend=0, proximity=0.1),
+        DisplayPage("ASA123", bearing_degrees=45, proximity=0.8),
+        DisplayPage("ASA123", bearing_degrees=90, proximity=0.7),
+        DisplayPage("ASA123", bearing_degrees=135, proximity=0.6),
+        DisplayPage("ASA123", bearing_degrees=180, proximity=0.5),
+        DisplayPage("ASA123", bearing_degrees=225, proximity=0.4),
+        DisplayPage("ASA123", bearing_degrees=270, proximity=0.3),
+        DisplayPage("ASA123", bearing_degrees=315, proximity=0.2),
         DisplayPage("QXE2372", bearing_degrees=0, proximity=1.0),
-        DisplayPage("QXE2372", trend=1, proximity=1.0),
+        DisplayPage("OFFLINE"),
         DisplayPage("ASA123", bearing_degrees=315, proximity=0.95, overhead=True),
         DisplayPage("ASA123", bearing_degrees=90, proximity=0.5, stale=True),
         MarqueePage("ASA123 B739 2.4NM SE 5500FT CLB 266KT"),
@@ -186,10 +202,37 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
         if not item.self_timed:
             time.sleep(seconds)
     print("  the callsign stays on screen for every frame", flush=True)
-    print("  right-hand cell cycles: bearing arrow, then climb/level/descend chevrons", flush=True)
+    print("  the right-hand block holds one arrow, rotating N, NE, E, SE, S, SW, W, NW", flush=True)
     print("  bottom row is the proximity bar: longer means closer", flush=True)
-    print("  QXE2372 is 7 characters, so its indicator is squeezed into 4 columns", flush=True)
-    print("  the overhead frame inverts the indicator cell; STALE lights the top-right pixel")
+    print("  QXE2372 is 7 characters, so it is clipped rather than covering the arrow", flush=True)
+    print("  OFFLINE has no arrow, so it uses the full width", flush=True)
+    print("  the overhead frame inverts the arrow block; STALE lights the bottom-right pixel")
+
+
+def _phase_speed(settings: Any, seconds: float) -> None:
+    """Step the SPI clock upward so the fastest reliable rate can be confirmed by eye."""
+    from dataclasses import replace
+
+    from balc_flights_led.config import SUPPORTED_SPI_SPEEDS_HZ
+    from balc_flights_led.display import Max7219Renderer
+    from balc_flights_led.presentation import DisplayPage, MarqueePage
+
+    for speed in SUPPORTED_SPI_SPEEDS_HZ:
+        label = f"{speed // 1_000_000}M" if speed >= 1_000_000 else f"{speed // 1_000}K"
+        print(f"  {speed:>9} Hz", flush=True)
+        renderer = Max7219Renderer(
+            replace(settings.matrix, spi_speed_hz=speed),
+            settings.display,
+        )
+        try:
+            renderer.render(DisplayPage(label, bearing_degrees=0, proximity=1.0))
+            time.sleep(seconds)
+            renderer.render(MarqueePage(f"{label} 0123456789 ABCDEFGHIJ"))
+        finally:
+            renderer.close()
+
+    print("  a bad speed shows flicker, dropped blocks, or garbled glyphs", flush=True)
+    print("  keep the fastest speed that stayed clean, then set matrix.spi_speed_hz", flush=True)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

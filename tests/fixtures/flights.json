@@ -1,5 +1,5 @@
 {
-  "apiVersion": "1.0",
+  "apiVersion": "1.1",
   "status": "ok",
   "generatedAt": "2026-07-23T18:30:00.000Z",
   "source": "adsb.lol",
@@ -15,10 +15,17 @@
       "airline": {"code": "ASA", "name": "Alaska Airlines"},
       "aircraft": {"typeCode": "B739", "originCountry": "United States"},
       "position": {
-        "latitude": 47.628,
-        "longitude": -122.3493,
+        "latitude": 47.625,
+        "longitude": -122.305,
         "altitudeFeet": 12000,
-        "onGround": false
+        "onGround": false,
+        "projected": {
+          "latitude": 47.624,
+          "longitude": -122.305,
+          "projectionSeconds": 1,
+          "capped": false,
+          "method": "constant-speed-heading"
+        }
       },
       "movement": {
         "speedKnots": 230,

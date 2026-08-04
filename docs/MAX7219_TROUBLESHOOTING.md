@@ -14,6 +14,8 @@ device = max7219(serial, cascaded=4, block_orientation=-90, blocks_arranged_in_r
 
 That script leaves `bus_speed_hz` and `contrast` at luma's defaults (8 MHz, `0x70`). The application's committed profile is deliberately more conservative at 500 kHz and contrast 64, and works equally well. Treat the script as the reference: if the application misbehaves but that script does not, the fault is in application code, not wiring.
 
+To find the fastest clock this chain tolerates, run `tests/run_tests.py --matrix-only --phase speed`. It opens the bus once per supported speed and draws static text and a scroll at each. Without a level shifter, higher clocks are the first thing to degrade, so trust what you see rather than the fact that 8 MHz works in the baseline script.
+
 Notes on the earlier failures:
 
 - `block_orientation` accepts only `0`, `90`, `-90`, `180`. Passing `-180` raises a bare `AssertionError` inside `luma/led_matrix/device.py`.

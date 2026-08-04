@@ -17,6 +17,16 @@ class Coordinates:
 
 
 @dataclass(frozen=True, slots=True)
+class Projection:
+    """Upstream dead-reckoning of a flight's position at response time."""
+
+    position: Coordinates
+    seconds: float
+    capped: bool = False
+    method: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class Flight:
     position: Coordinates
     icao24: str | None = None
@@ -31,6 +41,7 @@ class Flight:
     vertical_rate_fpm: int | None = None
     seen_seconds_ago: float | None = None
     data_source: str | None = None
+    projection: Projection | None = None
 
     @property
     def label(self) -> str:

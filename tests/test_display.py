@@ -5,6 +5,9 @@ from luma.core.device import dummy
 
 from balc_flights_led.config import DisplaySettings, MatrixSettings
 from balc_flights_led.display import (
+    ARROW_HEIGHT,
+    ARROW_SPRITES,
+    ARROW_WIDTH,
     DISPLAY_TEST,
     PLANE_SPRITE,
     SHUTDOWN,
@@ -100,51 +103,62 @@ class MatrixLayoutTests(unittest.TestCase):
         renderer.render(page)
         return device.image.load()
 
-    def lit_columns(self, pixels, row: int) -> list[int]:
-        return [column for column in range(32) if pixels[column, row]]
+    def lit_columns(self, pixels, row: int, *, until: int = 32) -> list[int]:
+        return [column for column in range(until) if pixels[column, row]]
 
-    def lit_in_region(self, pixels, *, first_column: int) -> int:
-        """Count lit pixels on the glyph rows, right of the given column."""
-        return sum(
-            1 for row in range(6) for column in range(first_column, 32) if pixels[column, row]
+    def arrow_block(self, pixels) -> tuple[tuple[int, ...], ...]:
+        return tuple(
+            tuple(1 if pixels[column, row] else 0 for column in range(32 - ARROW_WIDTH, 32))
+            for row in range(ARROW_HEIGHT)
+        )
+
+    def expected_block(self, octant: int) -> tuple[tuple[int, ...], ...]:
+        return tuple(
+            tuple(1 if cell == "#" else 0 for cell in row) for row in ARROW_SPRITES[octant]
         )
 
     def test_callsign_and_proximity_bar_share_the_frame(self) -> None:
         pixels = self.render(DisplayPage("ASA123", bearing_degrees=0, proximity=0.5))
 
-        self.assertEqual(self.lit_columns(pixels, 7), list(range(16)))
-        self.assertTrue(self.lit_columns(pixels, 1))
+        # The bar spans only the 24px callsign area, so it cannot reach the arrow.
+        self.assertEqual(self.lit_columns(pixels, 7, until=24), list(range(12)))
+        self.assertTrue(self.lit_columns(pixels, 1, until=24))
         # Row 6 is the gap that keeps the bar clear of the glyphs.
-        self.assertEqual(self.lit_columns(pixels, 6), [])
+        self.assertEqual(self.lit_columns(pixels, 6, until=24), [])
 
-    def test_seven_character_callsign_still_gets_an_indicator(self) -> None:
+    def test_arrow_block_matches_the_sprite_for_every_octant(self) -> None:
+        for octant, bearing in enumerate(range(0, 360, 45)):
+            with self.subTest(bearing=bearing):
+                pixels = self.render(DisplayPage("ASA123", bearing_degrees=bearing))
+                self.assertEqual(self.arrow_block(pixels), self.expected_block(octant))
+
+    def test_bearing_snaps_to_the_nearest_octant(self) -> None:
+        for bearing, octant in ((22.0, 0), (23.0, 1), (350.0, 0), (181.0, 4)):
+            with self.subTest(bearing=bearing):
+                pixels = self.render(DisplayPage("ASA123", bearing_degrees=bearing))
+                self.assertEqual(self.arrow_block(pixels), self.expected_block(octant))
+
+    def test_long_callsign_is_clipped_instead_of_overwriting_the_arrow(self) -> None:
         pixels = self.render(DisplayPage("QXE2372", bearing_degrees=0, proximity=1.0))
 
-        # QXE2372 is 28px, leaving exactly the 4 columns an indicator needs.
-        self.assertGreater(self.lit_in_region(pixels, first_column=28), 0)
+        self.assertEqual(self.arrow_block(pixels), self.expected_block(0))
 
-    def test_indicator_is_skipped_when_the_callsign_fills_the_matrix(self) -> None:
-        pixels = self.render(DisplayPage("ABCDEFGH", bearing_degrees=0, proximity=1.0))
+    def test_status_page_without_a_bearing_uses_the_whole_width(self) -> None:
+        pixels = self.render(DisplayPage("OFFLINE"))
 
-        self.assertEqual(self.lit_columns(pixels, 7), list(range(32)))
+        lit = [column for row in range(8) for column in self.lit_columns(pixels, row)]
+        self.assertTrue(lit)
+        self.assertGreaterEqual(max(lit), 24)
 
-    def test_bearing_arrow_and_climb_chevrons_differ(self) -> None:
-        north = self.render(DisplayPage("ASA123", bearing_degrees=0, proximity=0.5))
-        climbing = self.render(DisplayPage("ASA123", trend=1, proximity=0.5))
-
-        north_cell = [self.lit_columns(north, row) for row in range(6)]
-        climb_cell = [self.lit_columns(climbing, row) for row in range(6)]
-        self.assertNotEqual(north_cell, climb_cell)
-
-    def test_overhead_inverts_the_indicator_cell(self) -> None:
+    def test_overhead_inverts_the_arrow_block(self) -> None:
         plain = self.render(DisplayPage("ASA123", bearing_degrees=90, proximity=0.5))
         overhead = self.render(
             DisplayPage("ASA123", bearing_degrees=90, proximity=0.5, overhead=True)
         )
 
         self.assertGreater(
-            sum(len(self.lit_columns(overhead, row)) for row in range(6)),
-            sum(len(self.lit_columns(plain, row)) for row in range(6)),
+            sum(sum(row) for row in self.arrow_block(overhead)),
+            sum(sum(row) for row in self.arrow_block(plain)),
         )
 
 

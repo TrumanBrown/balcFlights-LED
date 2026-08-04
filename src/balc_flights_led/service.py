@@ -5,10 +5,10 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
-from .api import FlightApiClient, FlightApiError, FlightFeed
+from .api import FlightApiClient, FlightApiError
 from .config import Settings
 from .display import PageRenderer
-from .models import NearestFlight
+from .models import Flight, NearestFlight
 from .presentation import (
     DisplayItem,
     arrival_intro,
@@ -17,7 +17,13 @@ from .presentation import (
     idle_pages,
     status_pages,
 )
-from .selection import bounds_around, nearest_flight
+from .selection import (
+    bounds_around,
+    distance_nautical_miles,
+    estimated_position,
+    initial_bearing_degrees,
+    nearest_flight,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -49,6 +55,11 @@ class FlightMonitor:
         self._last_source: str | None = None
         self._last_success_at: float | None = None
         self._displayed_label: str | None = None
+        self._cached_flights: tuple[Flight, ...] = ()
+        self._cached_degraded = False
+        self._cached_warnings: tuple[str, ...] = ()
+        self._cached_rejected = 0
+        self._fetched_at: float | None = None
 
     def refresh(self) -> MonitorState:
         bounds = bounds_around(
@@ -61,17 +72,35 @@ class FlightMonitor:
             LOGGER.warning("Flight API unavailable: %s", error)
             return self._fallback_state("offline", "OFFLINE", str(error))
 
+        self._cached_flights = feed.flights
+        self._cached_degraded = feed.is_degraded
+        self._cached_warnings = feed.warnings
+        self._cached_rejected = feed.rejected_flights
+        self._last_source = feed.source
+        self._fetched_at = self._clock()
+        return self._select(0.0)
+
+    def reproject(self) -> MonitorState | None:
+        """Recompute geometry from the cached feed without issuing a request."""
+        if self._fetched_at is None:
+            return None
+        return self._select(self._clock() - self._fetched_at)
+
+    def _select(self, elapsed_seconds: float) -> MonitorState:
         selected = nearest_flight(
-            feed.flights,
+            self._cached_flights,
             self._settings.location,
             maximum_seen_seconds=self._settings.api.maximum_seen_seconds,
+            elapsed_seconds=elapsed_seconds,
         )
+        source = self._last_source or "unknown"
         if selected is not None:
-            self._remember(selected, feed)
-            return self._flight_state(selected, feed.source, stale=feed.is_degraded)
+            self._last_nearest = selected
+            self._last_success_at = self._fetched_at
+            return self._flight_state(selected, source, stale=self._cached_degraded)
 
-        if feed.is_degraded:
-            warning = "; ".join(feed.warnings) or "degraded flight data"
+        if self._cached_degraded:
+            warning = "; ".join(self._cached_warnings) or "degraded flight data"
             return self._fallback_state("degraded", "DATA?", warning)
 
         self._displayed_label = None
@@ -81,15 +110,10 @@ class FlightMonitor:
             summary=(
                 "No eligible airborne flights in the "
                 f"{self._settings.search_radius_nautical_miles:g} NM "
-                f"search box (source={feed.source}, rejected={feed.rejected_flights})"
+                f"search box (source={source}, rejected={self._cached_rejected})"
             ),
-            source=feed.source,
+            source=source,
         )
-
-    def _remember(self, nearest: NearestFlight, feed: FlightFeed) -> None:
-        self._last_nearest = nearest
-        self._last_source = feed.source
-        self._last_success_at = self._clock()
 
     def _flight_state(
         self,
@@ -123,12 +147,20 @@ class FlightMonitor:
             overhead=overhead,
         )
 
+    def _reprojected(self, nearest: NearestFlight, elapsed_seconds: float) -> NearestFlight:
+        position = estimated_position(nearest.flight, elapsed_seconds)
+        return NearestFlight(
+            flight=nearest.flight,
+            distance_nautical_miles=distance_nautical_miles(self._settings.location, position),
+            bearing_degrees=initial_bearing_degrees(self._settings.location, position),
+        )
+
     def _fallback_state(self, kind: str, matrix_message: str, reason: str) -> MonitorState:
         if self._last_nearest is not None and self._last_success_at is not None:
             age_seconds = self._clock() - self._last_success_at
             if age_seconds <= self._settings.api.last_known_ttl_seconds:
                 state = self._flight_state(
-                    self._last_nearest,
+                    self._reprojected(self._last_nearest, age_seconds),
                     self._last_source or "last-known",
                     stale=True,
                 )
@@ -169,6 +201,15 @@ def run_forever(
         if pending_intro:
             item = pending_intro.pop(0)
         else:
+            # Re-derive positions from the cached feed so the arrow and distance
+            # keep moving between polls instead of freezing for the interval.
+            live = monitor.reproject()
+            if live is not None:
+                state = live
+                if live.intro:
+                    pending_intro = list(live.intro)
+                    page_index = 0
+                    continue
             item = state.pages[page_index % len(state.pages)]
             page_index += 1
         renderer.render(item)

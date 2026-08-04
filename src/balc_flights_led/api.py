@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
-from .models import BoundingBox, Coordinates, Flight
+from .models import BoundingBox, Coordinates, Flight, Projection
 
 EXPECTED_API_MAJOR_VERSION = "1"
 DEFAULT_ENDPOINT = "https://seattlebalc.com/api/v1/flights"
@@ -159,6 +159,30 @@ def _parse_flight(value: object) -> Flight | None:
         vertical_rate_fpm=_optional_int(movement.get("verticalRateFeetPerMinute")),
         seen_seconds_ago=_optional_float(signal.get("seenSecondsAgo")),
         data_source=_optional_string(signal.get("dataSource")),
+        projection=_parse_projection(position.get("projected")),
+    )
+
+
+def _parse_projection(value: object) -> Projection | None:
+    if not isinstance(value, Mapping):
+        return None
+
+    latitude = _optional_float(value.get("latitude"))
+    longitude = _optional_float(value.get("longitude"))
+    if latitude is None or longitude is None:
+        return None
+
+    try:
+        position = Coordinates(latitude=latitude, longitude=longitude)
+    except ValueError:
+        return None
+
+    seconds = _optional_float(value.get("projectionSeconds"))
+    return Projection(
+        position=position,
+        seconds=max(0.0, seconds) if seconds is not None else 0.0,
+        capped=value.get("capped") is True,
+        method=_optional_string(value.get("method")),
     )
 
 

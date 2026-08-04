@@ -20,7 +20,7 @@ FONT_CHOICES = ("atari", "tiny", "lcd", "cp437", "sinclair")
 class ApiSettings:
     endpoint: str = DEFAULT_ENDPOINT
     timeout_seconds: float = 10.0
-    refresh_seconds: float = 30.0
+    refresh_seconds: float = 20.0
     maximum_seen_seconds: float = 60.0
     last_known_ttl_seconds: float = 300.0
 
@@ -128,13 +128,13 @@ def load_settings(
 
     return Settings(
         location=Coordinates(
-            latitude=_float_value(environment, "BFL_LATITUDE", location, "latitude", 47.6205),
+            latitude=_float_value(environment, "BFL_LATITUDE", location, "latitude", 47.6175),
             longitude=_float_value(
                 environment,
                 "BFL_LONGITUDE",
                 location,
                 "longitude",
-                -122.3493,
+                -122.305,
             ),
         ),
         search_radius_nautical_miles=_float_value(
@@ -159,7 +159,7 @@ def load_settings(
                 environment, "BFL_API_TIMEOUT", api, "timeout_seconds", 10.0
             ),
             refresh_seconds=_float_value(
-                environment, "BFL_REFRESH_SECONDS", api, "refresh_seconds", 30.0
+                environment, "BFL_REFRESH_SECONDS", api, "refresh_seconds", 20.0
             ),
             maximum_seen_seconds=_float_value(
                 environment,
