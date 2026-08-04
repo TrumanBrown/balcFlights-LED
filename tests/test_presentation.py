@@ -2,6 +2,7 @@ import unittest
 
 from balc_flights_led.models import Coordinates, Flight, NearestFlight
 from balc_flights_led.presentation import (
+    OVERHEAD_BLINK_SECONDS,
     ArrivalAnimation,
     IdleAnimation,
     MarqueePage,
@@ -51,6 +52,27 @@ class PresentationTests(unittest.TestCase):
         self.assertIsInstance(marquee, MarqueePage)
         self.assertTrue(marquee.self_timed)
         self.assertEqual(marquee.text, "ASA123 B739 0.5NM N 12000FT DES 230KT")
+
+    def test_overhead_blinks_the_arrow_without_changing_the_headline_dwell(self) -> None:
+        pages = flight_pages(
+            self.nearest,
+            overhead=True,
+            proximity=0.8,
+            headline_repeats=2,
+            page_seconds=2.0,
+        )
+
+        headline = pages[:-1]
+        self.assertEqual([page.text for page in headline], ["ASA123"] * len(headline))
+        self.assertTrue(all(page.bearing_degrees == 359.7 for page in headline))
+
+        visibility = [page.arrow_visible for page in headline]
+        self.assertEqual(visibility, [index % 2 == 0 for index in range(len(headline))])
+
+        # Blink frames are held briefly, but the headline still occupies the same time.
+        holds = [page.hold_seconds for page in headline]
+        self.assertTrue(all(hold == OVERHEAD_BLINK_SECONDS for hold in holds))
+        self.assertAlmostEqual(sum(holds), 2 * 2.0)
 
     def test_detail_line_degrades_when_fields_are_missing(self) -> None:
         nearest = NearestFlight(

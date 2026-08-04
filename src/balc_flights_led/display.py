@@ -334,13 +334,8 @@ class Max7219Renderer:
             self._draw_proximity_bar(draw, page.proximity, text_width)
         if page.stale:
             draw.point((width - 1, height - 1), fill="white")
-        if has_arrow:
-            self._draw_arrow(
-                draw,
-                page.bearing_degrees,
-                width - ARROW_WIDTH,
-                overhead=page.overhead,
-            )
+        if has_arrow and page.arrow_visible:
+            self._draw_arrow(draw, page.bearing_degrees, width - ARROW_WIDTH)
 
     def _draw_proximity_bar(self, draw: Any, proximity: float, width: int) -> None:
         lit = round(min(1.0, max(0.0, proximity)) * width)
@@ -348,17 +343,13 @@ class Max7219Renderer:
             draw.line((0, self._strip_row, lit - 1, self._strip_row), fill="white")
 
     @staticmethod
-    def _draw_arrow(draw: Any, bearing_degrees: float, left: int, *, overhead: bool) -> None:
+    def _draw_arrow(draw: Any, bearing_degrees: float, left: int) -> None:
         """Draw the octant arrow pointing from the reference point to the aircraft."""
-        if overhead:
-            draw.rectangle((left, 0, left + ARROW_WIDTH - 1, ARROW_HEIGHT - 1), fill="white")
-        ink = "black" if overhead else "white"
-
         octant = int((bearing_degrees % 360) / 45 + 0.5) % len(ARROW_SPRITES)
         for row, pattern in enumerate(ARROW_SPRITES[octant]):
             for column, cell in enumerate(pattern):
                 if cell == "#":
-                    draw.point((left + column, row), fill=ink)
+                    draw.point((left + column, row), fill="white")
 
     def _fit_text(self, value: str, available_width: int) -> str:
         fitted = value

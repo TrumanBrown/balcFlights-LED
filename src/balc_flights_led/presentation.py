@@ -9,6 +9,10 @@ from .models import NearestFlight
 # this simply holds the callsign for about 12 seconds at the default page time.
 DEFAULT_HEADLINE_REPEATS = 6
 
+# Overhead blinks the arrow rather than inverting its block: a lit 8x8 field
+# overwhelms the glyph it is meant to qualify.
+OVERHEAD_BLINK_SECONDS = 0.4
+
 COMPASS_POINTS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
 
 
@@ -25,6 +29,9 @@ class DisplayPage:
     proximity: float | None = None
     stale: bool = False
     overhead: bool = False
+    arrow_visible: bool = True
+    # Overrides display.page_seconds so a blink frame can be held briefly.
+    hold_seconds: float | None = None
 
     @property
     def self_timed(self) -> bool:
@@ -77,6 +84,7 @@ def flight_pages(
     overhead: bool = False,
     proximity: float | None = None,
     headline_repeats: int = DEFAULT_HEADLINE_REPEATS,
+    page_seconds: float = 2.0,
 ) -> tuple[DisplayItem, ...]:
     label = _matrix_text(nearest.flight.label)
     common = {
@@ -85,9 +93,22 @@ def flight_pages(
         "stale": stale,
         "overhead": overhead,
     }
-    headline = DisplayPage(bearing_degrees=nearest.bearing_degrees, **common)
-    repeats = (headline,) * max(1, headline_repeats)
-    return (*repeats, MarqueePage(detail_line(nearest), stale=stale))
+    repeats = max(1, headline_repeats)
+    if overhead:
+        # Split each headline slot into blink frames so the total dwell is unchanged.
+        per_slot = max(2, round(page_seconds / OVERHEAD_BLINK_SECONDS))
+        frames = tuple(
+            DisplayPage(
+                bearing_degrees=nearest.bearing_degrees,
+                arrow_visible=index % 2 == 0,
+                hold_seconds=OVERHEAD_BLINK_SECONDS,
+                **common,
+            )
+            for index in range(repeats * per_slot)
+        )
+    else:
+        frames = (DisplayPage(bearing_degrees=nearest.bearing_degrees, **common),) * repeats
+    return (*frames, MarqueePage(detail_line(nearest), stale=stale))
 
 
 def arrival_intro(nearest: NearestFlight, *, overhead: bool = False) -> tuple[DisplayItem, ...]:

@@ -149,7 +149,7 @@ def load_settings(
             "BFL_OVERHEAD_RADIUS_NM",
             location,
             "overhead_radius_nautical_miles",
-            3.0,
+            1.5,
         ),
         api=ApiSettings(
             endpoint=_string_value(

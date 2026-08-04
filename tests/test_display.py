@@ -150,16 +150,27 @@ class MatrixLayoutTests(unittest.TestCase):
         self.assertTrue(lit)
         self.assertGreaterEqual(max(lit), 24)
 
-    def test_overhead_inverts_the_arrow_block(self) -> None:
+    def test_overhead_no_longer_inverts_the_arrow_block(self) -> None:
         plain = self.render(DisplayPage("ASA123", bearing_degrees=90, proximity=0.5))
         overhead = self.render(
             DisplayPage("ASA123", bearing_degrees=90, proximity=0.5, overhead=True)
         )
 
-        self.assertGreater(
-            sum(sum(row) for row in self.arrow_block(overhead)),
-            sum(sum(row) for row in self.arrow_block(plain)),
+        self.assertEqual(self.arrow_block(overhead), self.arrow_block(plain))
+
+    def test_hidden_arrow_leaves_the_block_dark_without_reflowing_the_callsign(self) -> None:
+        shown = self.render(DisplayPage("ASA123", bearing_degrees=90, proximity=0.5))
+        hidden = self.render(
+            DisplayPage("ASA123", bearing_degrees=90, proximity=0.5, arrow_visible=False)
         )
+
+        self.assertEqual(sum(sum(row) for row in self.arrow_block(hidden)), 0)
+        # The callsign must not shift when the arrow blinks off.
+        for row in range(8):
+            self.assertEqual(
+                self.lit_columns(hidden, row, until=24),
+                self.lit_columns(shown, row, until=24),
+            )
 
 
 if __name__ == "__main__":

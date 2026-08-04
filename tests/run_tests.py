@@ -193,6 +193,13 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
         DisplayPage("QXE2372", bearing_degrees=0, proximity=1.0),
         DisplayPage("OFFLINE"),
         DisplayPage("ASA123", bearing_degrees=315, proximity=0.95, overhead=True),
+        DisplayPage(
+            "ASA123",
+            bearing_degrees=315,
+            proximity=0.95,
+            overhead=True,
+            arrow_visible=False,
+        ),
         DisplayPage("ASA123", bearing_degrees=90, proximity=0.5, stale=True),
         MarqueePage("ASA123 B739 2.4NM SE 5500FT CLB 266KT"),
         IdleAnimation(seconds=seconds * 2),
@@ -206,7 +213,8 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
     print("  bottom row is the proximity bar: longer means closer", flush=True)
     print("  QXE2372 is 7 characters, so it is clipped rather than covering the arrow", flush=True)
     print("  OFFLINE has no arrow, so it uses the full width", flush=True)
-    print("  the overhead frame inverts the arrow block; STALE lights the bottom-right pixel")
+    print("  the two overhead frames are a blink: same callsign, arrow on then off", flush=True)
+    print("  STALE lights the bottom-right pixel")
 
 
 def _phase_speed(settings: Any, seconds: float) -> None:

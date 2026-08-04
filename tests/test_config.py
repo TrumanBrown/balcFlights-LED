@@ -55,7 +55,7 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(settings.location.latitude, 47.6175)
         self.assertEqual(settings.location.longitude, -122.305)
-        self.assertEqual(settings.overhead_radius_nautical_miles, 3.0)
+        self.assertEqual(settings.overhead_radius_nautical_miles, 1.5)
         self.assertTrue(settings.display.animations)
         self.assertEqual(settings.matrix.cascaded, 4)
         self.assertEqual(settings.matrix.spi_speed_hz, 500_000)

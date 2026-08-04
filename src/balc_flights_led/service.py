@@ -11,6 +11,7 @@ from .display import PageRenderer
 from .models import Flight, NearestFlight
 from .presentation import (
     DisplayItem,
+    DisplayPage,
     arrival_intro,
     console_summary,
     flight_pages,
@@ -138,7 +139,13 @@ class FlightMonitor:
         marker = " OVERHEAD" if overhead else ""
         return MonitorState(
             kind="flight",
-            pages=flight_pages(nearest, stale=stale, overhead=overhead, proximity=proximity),
+            pages=flight_pages(
+                nearest,
+                stale=stale,
+                overhead=overhead,
+                proximity=proximity,
+                page_seconds=self._settings.display.page_seconds,
+            ),
             summary=f"{console_summary(nearest, stale=stale)}; source={source}{marker}",
             intro=intro,
             source=source,
@@ -216,7 +223,8 @@ def run_forever(
 
         remaining = next_refresh_at - clock()
         if not item.self_timed and remaining > 0:
-            sleeper(min(settings.display.page_seconds, remaining))
+            hold = item.hold_seconds if isinstance(item, DisplayPage) else None
+            sleeper(min(hold or settings.display.page_seconds, remaining))
 
         if clock() >= next_refresh_at:
             state = monitor.refresh()

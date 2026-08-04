@@ -36,7 +36,7 @@ A S A 1 2 3 |>|      callsign (24px) + bearing arrow (8x8 block)
 | Callsign | Columns 0-23 | Always visible. Registration or ICAO identifier when there is no callsign. Clipped rather than allowed to reach the arrow. |
 | Bearing arrow | Columns 24-31, rows 0-6 | Points from your configured location toward the aircraft, snapped to the nearest of eight compass directions. |
 | Proximity bar | Row 7, columns 0-23 | Longer means closer. Full width is directly overhead, empty is the edge of the search radius. |
-| Overhead marker | Arrow block | The block inverts to a dark arrow on a lit field while inside `location.overhead_radius_nautical_miles`. |
+| Overhead marker | Arrow block | The arrow blinks while the aircraft is inside `location.overhead_radius_nautical_miles`. |
 | Stale marker | Bottom-right pixel | Lit when the data is last-known rather than live. |
 | Detail scroll | Full width | Once per cycle: `ASA123 B739 2.4NM SE 5500FT CLB 266KT`. Climb, level, and descent are reported here. |
 | Arrival animation | Full width | When the nearest aircraft *changes*, a plane sprite flies past, then the new callsign is revealed column by column. |
@@ -160,7 +160,7 @@ BFL_REVERSE_ORDER
 BFL_CONTRAST
 ```
 
-The refresh interval defaults to 20 seconds and cannot be set lower, because the public API advertises `max-age=20` and asks consumers not to poll aggressively. Positions are extrapolated locally between polls, so a longer interval costs accuracy only once the 45-second projection ceiling is reached. Aircraft reported on the ground or older than `maximum_seen_seconds` are excluded by default. `overhead_radius_nautical_miles` must be greater than zero and no larger than the search radius.
+The refresh interval defaults to 20 seconds and cannot be set lower, because the public API advertises `max-age=20` and asks consumers not to poll aggressively. Positions are extrapolated locally between polls, so a longer interval costs accuracy only once the 45-second projection ceiling is reached. Aircraft reported on the ground or older than `maximum_seen_seconds` are excluded by default. `overhead_radius_nautical_miles` defaults to 1.5, must be greater than zero, and can be no larger than the search radius. Widen it and the blink stops meaning much, since a large share of Seattle traffic passes within a few miles.
 
 `scroll_delay` controls the detail marquee, `frame_seconds` controls the arrival and idle animations. Both trade smoothness against the available SPI bandwidth.
 

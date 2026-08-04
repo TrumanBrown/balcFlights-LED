@@ -4,8 +4,8 @@ latitude = 47.6175
 longitude = -122.305
 search_radius_nautical_miles = 20.0
 # Inside this radius an aircraft counts as overhead: it gets the arrival
-# animation and a dashed marker along the bottom row.
-overhead_radius_nautical_miles = 3.0
+# animation, and its bearing arrow blinks.
+overhead_radius_nautical_miles = 1.5
 
 [api]
 endpoint = "https://seattlebalc.com/api/v1/flights"
