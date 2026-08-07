@@ -83,6 +83,67 @@ class ConfigTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "display.font"):
             load_settings(Path("does-not-exist.toml"), environ={"BFL_FONT": "comic-sans"})
 
+    def test_panel_defaults_to_max7219_and_rejects_unknown_values(self) -> None:
+        settings = load_settings(Path("does-not-exist.toml"), environ={})
+        self.assertEqual(settings.display.panel, "max7219")
+
+        with self.assertRaisesRegex(ValueError, "display.panel"):
+            load_settings(Path("does-not-exist.toml"), environ={"BFL_PANEL": "eink"})
+
+    def test_hub75_defaults_describe_the_waveshare_64x64_panel(self) -> None:
+        settings = load_settings(Path("does-not-exist.toml"), environ={})
+
+        self.assertEqual(settings.hub75.rows, 64)
+        self.assertEqual(settings.hub75.columns, 64)
+        self.assertEqual(settings.hub75.width, 64)
+        self.assertEqual(settings.hub75.height, 64)
+        self.assertEqual(settings.hub75.hardware_mapping, "regular")
+        self.assertEqual(settings.hub75.pixel_mapper_config, "")
+
+    def test_hub75_table_and_environment_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "settings.toml"
+            path.write_text(
+                textwrap.dedent(
+                    """
+                    [display]
+                    panel = "hub75"
+
+                    [hub75]
+                    chain_length = 2
+                    hardware_mapping = "adafruit-hat"
+                    """
+                ),
+                encoding="utf-8",
+            )
+
+            settings = load_settings(path, environ={"BFL_HUB75_BRIGHTNESS": "80"})
+
+        self.assertEqual(settings.display.panel, "hub75")
+        self.assertEqual(settings.hub75.chain_length, 2)
+        self.assertEqual(settings.hub75.width, 128)
+        self.assertEqual(settings.hub75.hardware_mapping, "adafruit-hat")
+        self.assertEqual(settings.hub75.brightness, 80)
+
+    def test_hub75_rejects_impossible_geometry_and_mappings(self) -> None:
+        for variable, value, message in (
+            ("BFL_HUB75_ROWS", "60", "hub75.rows"),
+            ("BFL_HUB75_MAPPING", "waveshare", "hub75.hardware_mapping"),
+            ("BFL_HUB75_BRIGHTNESS", "0", "hub75.brightness"),
+            ("BFL_HUB75_RGB_SEQUENCE", "RGX", "hub75.led_rgb_sequence"),
+            ("BFL_HUB75_GPIO_SLOWDOWN", "11", "hub75.gpio_slowdown"),
+            ("BFL_HUB75_PANEL_TYPE", "FM9999", "hub75.panel_type"),
+        ):
+            with self.subTest(variable=variable), self.assertRaisesRegex(ValueError, message):
+                load_settings(Path("does-not-exist.toml"), environ={variable: value})
+
+    def test_hub75_accepts_the_documented_init_chipsets(self) -> None:
+        settings = load_settings(
+            Path("does-not-exist.toml"),
+            environ={"BFL_HUB75_PANEL_TYPE": "FM6126A"},
+        )
+        self.assertEqual(settings.hub75.panel_type, "FM6126A")
+
 
 if __name__ == "__main__":
     unittest.main()

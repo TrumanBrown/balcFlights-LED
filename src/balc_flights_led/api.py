@@ -108,7 +108,9 @@ def parse_flight_feed(payload: object) -> FlightFeed:
 
     raw_warnings = payload.get("warnings", [])
     warnings = (
-        tuple(str(warning) for warning in raw_warnings) if isinstance(raw_warnings, list) else ()
+        tuple(filter(None, (_optional_string(warning) for warning in raw_warnings)))
+        if isinstance(raw_warnings, list)
+        else ()
     )
 
     declared_count = _optional_int(payload.get("count"))
@@ -201,7 +203,9 @@ def _required_string(value: object, field: str) -> str:
 def _optional_string(value: object) -> str | None:
     if not isinstance(value, str):
         return None
-    stripped = value.strip()
+    # Feed strings reach the log and the terminal, so drop control characters
+    # rather than letting a callsign carry an escape sequence.
+    stripped = "".join(character for character in value if character.isprintable()).strip()
     return stripped or None
 
 

@@ -5,18 +5,24 @@ import logging
 import signal
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 
 from .api import FlightApiClient
-from .config import RENDERER_CHOICES, Settings, load_settings
-from .display import ConsoleRenderer, Max7219Renderer, MultiRenderer, PageRenderer
+from .config import PANEL_CHOICES, RENDERER_CHOICES, Settings, load_settings
+from .display import (
+    ConsoleRenderer,
+    MultiRenderer,
+    PageRenderer,
+    create_matrix_renderer,
+)
 from .service import FlightMonitor, run_forever
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="balc-flights-led",
-        description="Display the nearest Seattle Balc flight on a MAX7219 LED matrix.",
+        description="Display the nearest Seattle Balc flight on a MAX7219 or HUB75 LED matrix.",
     )
     parser.add_argument(
         "--config",
@@ -38,6 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="console",
         help="Use console by default so API checks never touch SPI unexpectedly",
     )
+    once.add_argument(
+        "--panel",
+        choices=PANEL_CHOICES,
+        default=None,
+        help="Override display.panel: the MAX7219 chain or a HUB75 RGB panel",
+    )
 
     run = commands.add_parser("run", help="Continuously refresh and display flights")
     run.add_argument(
@@ -45,6 +57,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=RENDERER_CHOICES,
         default=None,
         help="Override display.renderer; 'both' drives the matrix and prints each frame",
+    )
+    run.add_argument(
+        "--panel",
+        choices=PANEL_CHOICES,
+        default=None,
+        help="Override display.panel: the MAX7219 chain or a HUB75 RGB panel",
     )
     return parser
 
@@ -59,6 +77,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         settings = load_settings(arguments.config)
+        if arguments.panel is not None:
+            settings = replace(
+                settings,
+                display=replace(settings.display, panel=arguments.panel),
+            )
         client = FlightApiClient(
             settings.api.endpoint,
             timeout_seconds=settings.api.timeout_seconds,
@@ -115,7 +138,7 @@ def _create_renderer(name: str, settings: Settings) -> PageRenderer:
     if name == "console":
         return ConsoleRenderer()
     if name == "matrix":
-        return Max7219Renderer(settings.matrix, settings.display)
+        return create_matrix_renderer(settings)
     if name == "both":
-        return MultiRenderer(ConsoleRenderer(), Max7219Renderer(settings.matrix, settings.display))
+        return MultiRenderer(ConsoleRenderer(), create_matrix_renderer(settings))
     raise ValueError(f"unsupported renderer: {name}")

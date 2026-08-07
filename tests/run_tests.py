@@ -3,7 +3,7 @@
 # Software only. Never opens SPI, safe anywhere.
 .venv/bin/python tests/run_tests.py
 
-# Software checks, then drive the real MAX7219 chain.
+# Software checks, then drive whichever panel balc.local.toml selects.
 .venv/bin/python tests/run_tests.py --matrix
 
 # Isolate one hardware phase, or blank a stuck display.
@@ -33,6 +33,8 @@ PHASES = ("wiring", "blocks", "visuals", "off")
 # Opt-in only: it opens and closes the bus once per speed, so it cannot share
 # the device the other phases hold.
 SPEED_PHASE = "speed"
+# A HUB75 panel has no cascade to count and no SPI clock to step.
+HUB75_PHASES = ("wiring", "visuals", "off")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,16 +44,18 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "Hardware phases:\n"
             "  wiring   raw display-test register toggle; proves VCC/GND/DIN/CLK/CS\n"
+            "           (HUB75: solid white, red, green, blue fills)\n"
             "  blocks   lights each 8x8 block in turn; proves the cascade length\n"
             "  visuals  every frame the application can draw, including animations\n"
             "  off      clears every row and enters shutdown\n"
             "  speed    steps the SPI clock up so you can confirm the fastest clean rate\n"
+            "\nblocks and speed are MAX7219 only.\n"
         ),
     )
     parser.add_argument(
         "--matrix",
         action="store_true",
-        help="Also drive the physical matrix over SPI",
+        help="Also drive the physical panel selected by display.panel",
     )
     parser.add_argument(
         "--matrix-only",
@@ -88,6 +92,9 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
     print("=" * 70, flush=True)
 
     settings = load_settings(PROJECT_ROOT / "balc.local.toml")
+    if settings.display.panel == "hub75":
+        return run_hub75_checks(settings, phases, seconds)
+
     matrix = settings.matrix
     print(
         f"MAX7219 {matrix.cascaded * 8}x8 on SPI{matrix.spi_port}.{matrix.spi_device} "
@@ -129,6 +136,66 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
 
     print("matrix checks are observational; confirm the expectations above by eye", flush=True)
     return True
+
+
+def run_hub75_checks(settings: Any, phases: Sequence[str], seconds: float) -> bool:
+    from balc_flights_led.display import Hub75Renderer
+
+    panel = settings.hub75
+    print(
+        f"HUB75 {panel.width}x{panel.height} via {panel.hardware_mapping} "
+        f"(rows={panel.rows}, cols={panel.columns}, chain_length={panel.chain_length}, "
+        f"parallel={panel.parallel}, gpio_slowdown={panel.gpio_slowdown}, "
+        f"brightness={panel.brightness})",
+        flush=True,
+    )
+
+    unsupported = [phase for phase in phases if phase not in HUB75_PHASES]
+    if unsupported:
+        print(f"  skipping MAX7219-only phases: {', '.join(unsupported)}", flush=True)
+    phases = [phase for phase in phases if phase in HUB75_PHASES]
+    if not phases:
+        return True
+
+    renderer = Hub75Renderer(panel, settings.display)
+    try:
+        for phase in phases:
+            print(f"[{phase}]", flush=True)
+            if phase == "wiring":
+                _phase_panel_wiring(renderer, seconds)
+            elif phase == "visuals":
+                _phase_visuals(renderer, seconds)
+            elif phase == "off":
+                renderer.matrix.Clear()
+                print("  cleared", flush=True)
+    except KeyboardInterrupt:
+        print("\ninterrupted", flush=True)
+    finally:
+        renderer.close()
+
+    print("panel checks are observational; confirm the expectations above by eye", flush=True)
+    return True
+
+
+def _phase_panel_wiring(renderer: Any, seconds: float) -> None:
+    """Flood the panel with solid colours; proves power, the ribbon, and the RGB order."""
+    from PIL import Image
+
+    matrix = renderer.matrix
+    size = (matrix.width, matrix.height)
+    fills = (
+        ("white", (255, 255, 255)),
+        ("red", (255, 0, 0)),
+        ("green", (0, 255, 0)),
+        ("blue", (0, 0, 255)),
+    )
+    for name, color in fills:
+        print(f"  expect: a solid {name} panel", flush=True)
+        matrix.SetImage(Image.new("RGB", size, color))
+        time.sleep(seconds)
+    matrix.Clear()
+    print("  wrong colours here mean hub75.led_rgb_sequence, not the layout", flush=True)
+    print("  missing rows or ghosting means gpio_slowdown or the power supply", flush=True)
 
 
 def _broadcast(device: Any, register: int, value: int) -> None:
@@ -209,12 +276,12 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
         if not item.self_timed:
             time.sleep(seconds)
     print("  the callsign stays on screen for every frame", flush=True)
-    print("  the right-hand block holds one arrow, rotating N, NE, E, SE, S, SW, W, NW", flush=True)
-    print("  bottom row is the proximity bar: longer means closer", flush=True)
+    print("  one arrow rotates through N, NE, E, SE, S, SW, W, NW", flush=True)
+    print("  the proximity bar is longer the closer the aircraft is", flush=True)
     print("  QXE2372 is 7 characters, so it is clipped rather than covering the arrow", flush=True)
     print("  OFFLINE has no arrow, so it uses the full width", flush=True)
     print("  the two overhead frames are a blink: same callsign, arrow on then off", flush=True)
-    print("  STALE lights the bottom-right pixel")
+    print("  STALE marks the frame in amber")
 
 
 def _phase_speed(settings: Any, seconds: float) -> None:

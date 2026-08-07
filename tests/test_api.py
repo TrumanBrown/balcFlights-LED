@@ -67,6 +67,27 @@ class FlightApiTests(unittest.TestCase):
         self.assertEqual(feed.warnings, ("No upstream source was usable.",))
         self.assertEqual(feed.flights, ())
 
+    def test_control_characters_never_leave_the_parser(self) -> None:
+        feed = parse_flight_feed(
+            {
+                "apiVersion": "1.1",
+                "status": "degraded",
+                "source": "up\x1b[2Jstream",
+                "warnings": ["clear\x1b[2J", 42],
+                "flights": [
+                    {
+                        "identifiers": {"callsign": "ASA\x1b[31m123\n"},
+                        "position": {"latitude": 47.6, "longitude": -122.3},
+                    }
+                ],
+            }
+        )
+
+        # These strings reach the log and the terminal, so escapes must not survive.
+        self.assertEqual(feed.flights[0].label, "ASA[31M123")
+        self.assertEqual(feed.source, "up[2Jstream")
+        self.assertEqual(feed.warnings, ("clear[2J",))
+
     def test_rejects_unknown_major_api_version(self) -> None:
         with self.assertRaisesRegex(FlightApiContractError, "unsupported.*version"):
             parse_flight_feed(

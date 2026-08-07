@@ -19,6 +19,8 @@ last_known_ttl_seconds = 300.0
 [display]
 # console, matrix, or both
 renderer = "console"
+# Which physical display 'matrix' means: max7219 (32x8 chain) or hub75 (RGB panel)
+panel = "max7219"
 # atari and tiny are the only fonts narrow enough for a full callsign
 font = "atari"
 page_seconds = 2.0
@@ -26,6 +28,7 @@ scroll_delay = 0.04
 frame_seconds = 0.03
 animations = true
 
+# Used when display.panel = "max7219"
 [matrix]
 spi_port = 0
 spi_device = 0
@@ -35,3 +38,27 @@ block_orientation = -90
 rotate = 0
 reverse_order = false
 contrast = 64
+
+# Used when display.panel = "hub75". Defaults match the Waveshare
+# RGB-Matrix-P2.5-64x64 wired straight to the Pi GPIO header.
+[hub75]
+rows = 64
+columns = 64
+chain_length = 1
+parallel = 1
+# regular for direct wiring, adafruit-hat or adafruit-hat-pwm for that HAT
+hardware_mapping = "regular"
+# 4 suits a Pi 4; lower it for a faster refresh, raise it if rows ghost or flicker
+gpio_slowdown = 4
+pwm_bits = 11
+pwm_lsb_nanoseconds = 130
+brightness = 50
+limit_refresh_rate_hz = 0
+led_rgb_sequence = "RGB"
+# "", FM6126A, or FM6127. Only needed if the panel never lights up at all.
+panel_type = ""
+pixel_mapper_config = ""
+# true trades picture stability for not needing onboard audio blacklisted
+disable_hardware_pulsing = false
+# Keep true: the driver needs root to start, then drops back to an unprivileged user
+drop_privileges = true

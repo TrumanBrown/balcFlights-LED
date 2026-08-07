@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "balc-flights-led"
 version = "0.1.0"
-description = "Show the nearest Seattle Balc flight on a Raspberry Pi MAX7219 matrix"
+description = "Show the nearest Seattle Balc flight on a Raspberry Pi MAX7219 or HUB75 matrix"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["raspberry-pi", "max7219", "led-matrix", "adsb", "flight-tracking"]
+keywords = ["raspberry-pi", "max7219", "hub75", "led-matrix", "adsb", "flight-tracking"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
