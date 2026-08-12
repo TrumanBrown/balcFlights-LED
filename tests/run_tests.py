@@ -14,10 +14,11 @@
 from __future__ import annotations
 
 import argparse
+import itertools
 import sys
 import time
 import unittest
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -33,8 +34,10 @@ PHASES = ("wiring", "blocks", "visuals", "off")
 # Opt-in only: it opens and closes the bus once per speed, so it cannot share
 # the device the other phases hold.
 SPEED_PHASE = "speed"
-# A HUB75 panel has no cascade to count and no SPI clock to step.
-HUB75_PHASES = ("wiring", "visuals", "off")
+# A HUB75 panel has no cascade to count and no SPI clock to step, but it is the
+# only panel with the pixels for the radar.
+RADAR_PHASE = "radar"
+HUB75_PHASES = ("wiring", "visuals", RADAR_PHASE, "off")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -47,9 +50,10 @@ def build_parser() -> argparse.ArgumentParser:
             "           (HUB75: solid white, red, green, blue fills)\n"
             "  blocks   lights each 8x8 block in turn; proves the cascade length\n"
             "  visuals  every frame the application can draw, including animations\n"
+            "  radar    the HUB75 radar: range rings, sweep, coloured contacts\n"
             "  off      clears every row and enters shutdown\n"
             "  speed    steps the SPI clock up so you can confirm the fastest clean rate\n"
-            "\nblocks and speed are MAX7219 only.\n"
+            "\nblocks and speed are MAX7219 only. radar is HUB75 only.\n"
         ),
     )
     parser.add_argument(
@@ -64,12 +68,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--phase",
-        choices=(*PHASES, SPEED_PHASE),
+        choices=(*PHASES, SPEED_PHASE, RADAR_PHASE),
         help="Run a single hardware phase instead of all of them",
     )
     parser.add_argument("--seconds", type=float, default=1.5, help="Dwell per visual step")
+    parser.add_argument(
+        "--loop",
+        action="store_true",
+        help="Repeat the hardware phases until Ctrl+C instead of running them once",
+    )
     parser.add_argument("-q", "--quiet", action="store_true", help="Less unit test output")
     return parser
+
+
+def _passes(loop: bool) -> Iterator[int]:
+    """One pass, or forever until Ctrl+C."""
+    return itertools.count() if loop else iter((0,))
 
 
 def run_unit_tests(*, verbosity: int) -> bool:
@@ -83,7 +97,7 @@ def run_unit_tests(*, verbosity: int) -> bool:
     return unittest.TextTestRunner(verbosity=verbosity).run(suite).wasSuccessful()
 
 
-def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
+def run_matrix_checks(phases: Sequence[str], seconds: float, *, loop: bool = False) -> bool:
     from balc_flights_led.config import load_settings
     from balc_flights_led.display import Max7219Renderer, force_max7219_off
 
@@ -93,7 +107,7 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
 
     settings = load_settings(PROJECT_ROOT / "balc.local.toml")
     if settings.display.panel == "hub75":
-        return run_hub75_checks(settings, phases, seconds)
+        return run_hub75_checks(settings, phases, seconds, loop=loop)
 
     matrix = settings.matrix
     print(
@@ -118,17 +132,18 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
     renderer = Max7219Renderer(matrix, settings.display)
     device = renderer.device
     try:
-        for phase in phases:
-            print(f"[{phase}]", flush=True)
-            if phase == "wiring":
-                _phase_wiring(device, seconds)
-            elif phase == "blocks":
-                _phase_blocks(device, seconds)
-            elif phase == "visuals":
-                _phase_visuals(renderer, seconds)
-            elif phase == "off":
-                force_max7219_off(device, device.cascaded)
-                print("  cleared and shut down", flush=True)
+        for _ in _passes(loop):
+            for phase in phases:
+                print(f"[{phase}]", flush=True)
+                if phase == "wiring":
+                    _phase_wiring(device, seconds)
+                elif phase == "blocks":
+                    _phase_blocks(device, seconds)
+                elif phase == "visuals":
+                    _phase_visuals(renderer, seconds)
+                elif phase == "off":
+                    force_max7219_off(device, device.cascaded)
+                    print("  cleared and shut down", flush=True)
     except KeyboardInterrupt:
         print("\ninterrupted", flush=True)
     finally:
@@ -138,7 +153,13 @@ def run_matrix_checks(phases: Sequence[str], seconds: float) -> bool:
     return True
 
 
-def run_hub75_checks(settings: Any, phases: Sequence[str], seconds: float) -> bool:
+def run_hub75_checks(
+    settings: Any,
+    phases: Sequence[str],
+    seconds: float,
+    *,
+    loop: bool = False,
+) -> bool:
     from balc_flights_led.display import Hub75Renderer
 
     panel = settings.hub75
@@ -159,15 +180,18 @@ def run_hub75_checks(settings: Any, phases: Sequence[str], seconds: float) -> bo
 
     renderer = Hub75Renderer(panel, settings.display)
     try:
-        for phase in phases:
-            print(f"[{phase}]", flush=True)
-            if phase == "wiring":
-                _phase_panel_wiring(renderer, seconds)
-            elif phase == "visuals":
-                _phase_visuals(renderer, seconds)
-            elif phase == "off":
-                renderer.matrix.Clear()
-                print("  cleared", flush=True)
+        for _ in _passes(loop):
+            for phase in phases:
+                print(f"[{phase}]", flush=True)
+                if phase == "wiring":
+                    _phase_panel_wiring(renderer, seconds)
+                elif phase == "visuals":
+                    _phase_visuals(renderer, seconds)
+                elif phase == RADAR_PHASE:
+                    _phase_radar(renderer, settings, seconds)
+                elif phase == "off":
+                    renderer.matrix.Clear()
+                    print("  cleared", flush=True)
     except KeyboardInterrupt:
         print("\ninterrupted", flush=True)
     finally:
@@ -284,6 +308,68 @@ def _phase_visuals(renderer: Any, seconds: float) -> None:
     print("  STALE marks the frame in amber")
 
 
+def _phase_radar(renderer: Any, settings: Any, seconds: float) -> None:
+    """Fly synthetic traffic across the dial, so sweep, trails and colour are all visible."""
+    from balc_flights_led.presentation import (
+        ArrivalAnimation,
+        RadarPage,
+        RadarTrack,
+        compass_point,
+    )
+
+    span = settings.display.radar_range_nautical_miles or settings.search_radius_nautical_miles
+    span = min(span, settings.search_radius_nautical_miles)
+    # label, bearing, share of the range, NM per step, degrees per step, trend
+    traffic = (
+        ("ASA123", 200.0, 0.30, -0.35, 1.4, 1),
+        ("UAL512", 20.0, 0.75, -0.55, -0.9, -1),
+        ("DAL88", 110.0, 0.55, 0.30, 0.6, 0),
+        ("QXE402", 300.0, 0.90, -0.60, 2.1, 1),
+        ("FDX1188", 250.0, 0.45, 0.25, -1.7, -1),
+    )
+    for step in range(max(10, round(seconds * 8))):
+        plotted = [
+            (
+                label,
+                max(0.3, share * span + per_step * step),
+                (bearing + drift * step) % 360,
+                trend,
+            )
+            for label, bearing, share, per_step, drift, trend in traffic
+        ]
+        closest = min(plotted, key=lambda entry: entry[1])
+        page = RadarPage(
+            range_nautical_miles=span,
+            tracks=tuple(
+                RadarTrack(
+                    label=label,
+                    distance_nautical_miles=distance,
+                    bearing_degrees=bearing,
+                    trend=trend,
+                    nearest=label == closest[0],
+                )
+                for label, distance, bearing, trend in plotted
+            ),
+            label=closest[0],
+            detail=("B739 5500FT", "266KT CLB"),
+            distance_text=f"{closest[1]:.1f}NM",
+            compass=compass_point(closest[2]),
+            trend=closest[3],
+            heading_degrees=(step * 15) % 360,
+            seconds=0.35,
+        )
+        if step == 0:
+            renderer.render(ArrivalAnimation(page.label, page=page))
+        renderer.render(page)
+    print("  a plane flies past first, then wipes the dial in behind it", flush=True)
+    print("  five contacts orbit the dial, each leaving a short fading trail", flush=True)
+    print("  green is climbing, amber level, red descending", flush=True)
+    print("  the sweep brightens each contact as it passes, then they decay", flush=True)
+    print("  the closest contact carries a blinking cyan target marker", flush=True)
+    print("  the top-right sprite is the nearest aircraft's heading, and it rotates", flush=True)
+    print(f"  range rings sit at 50% and 90% of {span:g} NM", flush=True)
+
+
 def _phase_speed(settings: Any, seconds: float) -> None:
     """Step the SPI clock upward so the fastest reliable rate can be confirmed by eye."""
     from dataclasses import replace
@@ -323,7 +409,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if arguments.matrix or arguments.matrix_only:
         phases = [arguments.phase] if arguments.phase else list(PHASES)
-        successful = run_matrix_checks(phases, arguments.seconds) and successful
+        successful = (
+            run_matrix_checks(phases, arguments.seconds, loop=arguments.loop) and successful
+        )
 
     print("PASSED" if successful else "FAILED", flush=True)
     return 0 if successful else 1

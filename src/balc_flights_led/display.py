@@ -13,6 +13,8 @@ from .presentation import (
     DisplayPage,
     IdleAnimation,
     MarqueePage,
+    RadarPage,
+    RadarTrack,
 )
 
 DISPLAY_TEST = 0x0F
@@ -148,6 +150,37 @@ ARROW_POLYGON = (
 # octant sprites read better.
 MINIMUM_VECTOR_ARROW = 16
 
+# Radar palette. Range rings sit well below the targets so contacts read first.
+RADAR_RING_COLOR = (31, 107, 58)
+RADAR_RING_OUTER_COLOR = (21, 70, 42)
+RADAR_SWEEP_COLOR = (47, 191, 95)
+RADAR_TARGET_COLOR = (0, 194, 255)
+RADAR_ORIGIN_COLOR = (163, 180, 194)
+DETAIL_COLOR = (163, 180, 194)
+LABEL_COLOR = (124, 147, 166)
+# Vertical rate becomes colour, which is what frees the characters it used to cost.
+TREND_COLORS = {1: (58, 209, 106), 0: (240, 180, 41), -1: (232, 80, 58)}
+
+# One inner ring is enough for scale; more of them compete with the contacts.
+RADAR_RING_FRACTIONS = ((0.5, RADAR_RING_COLOR),)
+RADAR_OUTER_RING_FRACTION = 0.9
+RADAR_SWEEP_DEGREES_PER_SECOND = 85.0
+# Spokes behind the leading edge, each dimmer, which reads as a decaying trace.
+RADAR_SWEEP_TAIL = 6
+RADAR_SWEEP_TAIL_DEGREES = 5.0
+RADAR_SWEEP_ALPHA = 0.34
+# How long a contact stays lit after the sweep passes it, in degrees of rotation.
+RADAR_AFTERGLOW_DEGREES = 110.0
+RADAR_AFTERGLOW_FLOOR = 0.45
+RADAR_TRAIL_POINTS = 4
+RADAR_TRAIL_ALPHA = 0.34
+RADAR_TRAIL_FALLOFF = 0.07
+# Panels big enough for a 2x2 contact; below this a single pixel is all there is.
+MINIMUM_BIG_CONTACT_RADIUS = 16
+RADAR_BLINK_DUTY = 0.72
+# Below this the callsign needs the full width more than the heading sprite does.
+MINIMUM_CALLSIGN_WIDTH = 24
+
 
 def force_max7219_off(device: Any, cascaded: int) -> None:
     for _ in range(SHUTDOWN_RETRIES):
@@ -174,6 +207,18 @@ class ConsoleRenderer:
             return
         if isinstance(item, MarqueePage):
             print(f"[scroll] {item.text}", flush=True)
+            return
+        if isinstance(item, RadarPage):
+            details = [item.label or "NO FLT", f"tracks={len(item.tracks)}"]
+            if item.distance_text:
+                details.append(f"{item.distance_text} {item.compass}".strip())
+            if item.heading_degrees is not None:
+                details.append(f"heading={item.heading_degrees:.0f}")
+            if item.overhead:
+                details.append("OVERHEAD")
+            if item.stale:
+                details.append("STALE")
+            print("[radar] " + " | ".join(details), flush=True)
             return
 
         details = [item.text]
@@ -296,6 +341,9 @@ class Max7219Renderer:
         elif isinstance(item, IdleAnimation):
             self._render_idle(item)
         else:
+            if isinstance(item, RadarPage):
+                # 32x8 cannot hold a radar, so show what the block would have said.
+                item = DisplayPage(text=item.label or "NO FLT", stale=item.stale)
             with self._canvas(self._device) as draw:
                 self._draw_page(draw, item)
 
@@ -486,6 +534,8 @@ class Hub75Renderer:
         }
         self._font = proportional(available_fonts[self._display.font])
         self._marquee_font = proportional(CP437_FONT)
+        # The radar's detail block needs a font that fits four lines above it.
+        self._radar_font = proportional(TINY_FONT)
 
         self._width = int(self._matrix.width)
         self._height = int(self._matrix.height)
@@ -519,6 +569,25 @@ class Hub75Renderer:
             max(0, self._bar_top - arrow_height),
         )
 
+        # Radar layout: a detail block across the top, the dial filling the rest.
+        detail_height = self._glyph_height_of(self._radar_font)
+        line_pitch = detail_height + 1
+        first_line = headline_height + 1
+        self._radar_rows = (first_line, first_line + line_pitch, first_line + 2 * line_pitch)
+        block_height = self._radar_rows[2] + detail_height + 1
+        diameter = min(self._width - 2, self._height - block_height)
+        self._radar_radius = max(3, (diameter - 1) // 2)
+        self._radar_center = (self._width // 2, self._height - self._radar_radius - 2)
+        self._compass_left = round(self._width * 0.6875)
+        # Top-right corner, reserved for the heading sprite. The callsign is clipped
+        # to clear it, exactly as it is for the arrow block on the MAX7219 chain.
+        self._heading_scale = max(1, self._width // 64)
+        self._heading_left = self._width - ARROW_WIDTH * self._heading_scale - 1
+        self._heading_visible = self._heading_left >= MINIMUM_CALLSIGN_WIDTH
+        self._sweep_degrees = 0.0
+        self._radar_seconds = 0.0
+        self._trails: dict[str, list[tuple[float, float]]] = {}
+
     @property
     def matrix(self) -> Any:
         """Exposed so hardware checks can drive the panel directly."""
@@ -531,6 +600,8 @@ class Hub75Renderer:
             self._render_marquee(item)
         elif isinstance(item, IdleAnimation):
             self._render_idle(item)
+        elif isinstance(item, RadarPage):
+            self._render_radar(item)
         else:
             self._show(self._page_image(item))
 
@@ -540,6 +611,9 @@ class Hub75Renderer:
     def _glyph_height(self) -> int:
         layer = self._glyph_layer(INK_SAMPLE, self._font)
         return layer.height
+
+    def _glyph_height_of(self, font: Any) -> int:
+        return self._glyph_layer(INK_SAMPLE, font).height
 
     def _blank(self) -> Any:
         return self._image.new("RGB", (self._width, self._height))
@@ -679,13 +753,7 @@ class Hub75Renderer:
             self._show(image)
             time.sleep(frame_seconds)
 
-        page = self._page_image(
-            DisplayPage(
-                text=item.text,
-                bearing_degrees=item.bearing_degrees,
-                overhead=item.overhead,
-            )
-        )
+        page = self._arrival_target(item)
         step = max(2, self._width // 16)
         for revealed in range(0, self._width + 1, step):
             image = page.copy()
@@ -696,6 +764,19 @@ class Hub75Renderer:
                 )
             self._show(image)
             time.sleep(frame_seconds)
+
+    def _arrival_target(self, item: ArrivalAnimation) -> Any:
+        """What the sprite leaves behind: the radar when there is one, else the callsign."""
+        if item.page is not None:
+            self._sample_trails(item.page)
+            return self._radar_image(item.page)
+        return self._page_image(
+            DisplayPage(
+                text=item.text,
+                bearing_degrees=item.bearing_degrees,
+                overhead=item.overhead,
+            )
+        )
 
     def _render_idle(self, item: IdleAnimation) -> None:
         frame_seconds = self._display.frame_seconds
@@ -711,6 +792,216 @@ class Hub75Renderer:
                 draw.rectangle((x, y, x + size - 1, y + size - 1), fill=IDLE_COLOR)
             self._show(image)
             time.sleep(frame_seconds)
+
+    def _render_radar(self, item: RadarPage) -> None:
+        self._sample_trails(item)
+        frame_seconds = max(0.01, self._display.frame_seconds)
+        for _ in range(max(1, round(item.seconds / frame_seconds))):
+            self._show(self._radar_image(item))
+            self._sweep_degrees = (
+                self._sweep_degrees + RADAR_SWEEP_DEGREES_PER_SECOND * frame_seconds
+            ) % 360
+            self._radar_seconds += frame_seconds
+            time.sleep(frame_seconds)
+
+    def _radar_image(self, item: RadarPage) -> Any:
+        image = self._blank()
+        self._draw_detail_block(image, item)
+        self._draw_radar(image, item)
+        return image
+
+    def _sample_trails(self, item: RadarPage) -> None:
+        """One history point per page, which is what gives a contact a visible heading."""
+        live = {track.label for track in item.tracks}
+        for track in item.tracks:
+            history = self._trails.setdefault(track.label, [])
+            history.insert(0, (track.distance_nautical_miles, track.bearing_degrees))
+            del history[RADAR_TRAIL_POINTS:]
+        for label in set(self._trails) - live:
+            del self._trails[label]
+
+    def _draw_detail_block(self, image: Any, item: RadarPage) -> None:
+        available = self._heading_left - 2 if self._heading_visible else self._width - 2
+        if item.label:
+            fitted = self._fit_text(item.label, self._font, available, 1)
+            self._stamp(
+                image,
+                self._glyph_layer(fitted, self._font),
+                (1, 0),
+                STALE_COLOR if item.stale else TEXT_COLOR,
+            )
+
+        # The radar shows where the aircraft is; this shows where it is going.
+        if self._heading_visible and item.heading_degrees is not None:
+            self._stamp_sprite(
+                image,
+                ARROW_SPRITES[_octant(item.heading_degrees)],
+                (self._heading_left, 0),
+                self._heading_scale,
+                ARROW_COLOR,
+            )
+
+        for index, line in enumerate(item.detail[: len(self._radar_rows) - 1]):
+            if not line:
+                continue
+            self._stamp(
+                image,
+                self._glyph_layer(line, self._radar_font),
+                (1, self._radar_rows[index]),
+                TREND_COLORS[item.trend] if index else DETAIL_COLOR,
+            )
+
+        row = self._radar_rows[-1]
+        if item.distance_text:
+            self._stamp(
+                image,
+                self._glyph_layer(item.distance_text, self._radar_font),
+                (1, row),
+                OVERHEAD_COLOR if item.overhead else RADAR_TARGET_COLOR,
+            )
+        if item.compass:
+            self._stamp(
+                image,
+                self._glyph_layer(item.compass, self._radar_font),
+                (self._compass_left, row),
+                LABEL_COLOR,
+            )
+
+    def _draw_radar(self, image: Any, item: RadarPage) -> None:
+        center_x, center_y = self._radar_center
+        radius = self._radar_radius
+
+        for fraction, color in RADAR_RING_FRACTIONS:
+            self._dashed_circle(image, round(radius * fraction), color)
+        self._dashed_circle(
+            image,
+            round(radius * RADAR_OUTER_RING_FRACTION),
+            RADAR_RING_OUTER_COLOR,
+        )
+        for x, y in (
+            (center_x, center_y - radius),
+            (center_x, center_y + radius),
+            (center_x - radius, center_y),
+            (center_x + radius, center_y),
+        ):
+            self._put(image, x, y, RADAR_RING_COLOR)
+
+        # Dimmest spoke first, so the leading edge of the sweep lands on top.
+        draw = self._image_draw.Draw(image)
+        for index in range(RADAR_SWEEP_TAIL - 1, -1, -1):
+            angle = math.radians(self._sweep_degrees - index * RADAR_SWEEP_TAIL_DEGREES)
+            fade = ((1 - index / RADAR_SWEEP_TAIL) * 0.9 + 0.06) * RADAR_SWEEP_ALPHA
+            draw.line(
+                (
+                    center_x,
+                    center_y,
+                    center_x + math.sin(angle) * radius,
+                    center_y - math.cos(angle) * radius,
+                ),
+                fill=_dim(RADAR_SWEEP_COLOR, fade),
+            )
+        self._put(image, center_x, center_y, RADAR_ORIGIN_COLOR)
+
+        big = radius >= MINIMUM_BIG_CONTACT_RADIUS
+        for track in item.tracks:
+            self._draw_contact(image, item, track, big=big and track.nearest)
+
+    def _draw_contact(self, image: Any, item: RadarPage, track: RadarTrack, *, big: bool) -> None:
+        base = TREND_COLORS[track.trend]
+        # A contact is brightest as the sweep crosses it, then decays to a floor.
+        since_sweep = (self._sweep_degrees - track.bearing_degrees) % 360
+        if since_sweep < RADAR_AFTERGLOW_DEGREES:
+            brightness = 1.0 - (since_sweep / RADAR_AFTERGLOW_DEGREES) * (
+                1.0 - RADAR_AFTERGLOW_FLOOR
+            )
+        else:
+            brightness = RADAR_AFTERGLOW_FLOOR
+
+        # Only the nearest keeps a trail; five of them at once is just noise.
+        history = self._trails.get(track.label, ()) if track.nearest else ()
+        for index, (distance, bearing) in enumerate(history):
+            fade = brightness * (RADAR_TRAIL_ALPHA - index * RADAR_TRAIL_FALLOFF)
+            trail = self._radar_point(distance, bearing, item.range_nautical_miles)
+            if trail is not None and fade > 0:
+                self._put(image, trail[0], trail[1], _dim(base, fade))
+
+        point = self._radar_point(
+            track.distance_nautical_miles,
+            track.bearing_degrees,
+            item.range_nautical_miles,
+        )
+        if point is None:
+            return
+
+        x, y = point
+        color = _dim(base, brightness)
+        self._put(image, x, y, color)
+        if big:
+            self._put(image, x + 1, y, color)
+            self._put(image, x, y + 1, color)
+            self._put(image, x + 1, y + 1, color)
+
+        if track.nearest:
+            lit = (self._radar_seconds % 1.0) < RADAR_BLINK_DUTY
+            marker = _dim(RADAR_TARGET_COLOR, 1.0 if lit else 0.25)
+            far = 3 if big else 2
+            self._put(image, x, y - 2, marker)
+            self._put(image, x, y + far, marker)
+            self._put(image, x - 2, y, marker)
+            self._put(image, x + far, y, marker)
+
+    def _radar_point(
+        self,
+        distance_nautical_miles: float,
+        bearing_degrees: float,
+        range_nautical_miles: float,
+    ) -> tuple[int, int] | None:
+        if range_nautical_miles <= 0 or distance_nautical_miles > range_nautical_miles:
+            return None
+        angle = math.radians(bearing_degrees % 360)
+        scaled = self._radar_radius * distance_nautical_miles / range_nautical_miles
+        center_x, center_y = self._radar_center
+        return (
+            round(center_x + math.sin(angle) * scaled),
+            round(center_y - math.cos(angle) * scaled),
+        )
+
+    def _dashed_circle(self, image: Any, radius: int, color: tuple[int, int, int]) -> None:
+        """Midpoint circle with every other pixel dropped, so rings stay under the contacts."""
+        if radius < 2:
+            return
+        center_x, center_y = self._radar_center
+        x, y, error, index = radius, 0, 1 - radius, 0
+        while x >= y:
+            for offset_x, offset_y in (
+                (x, y),
+                (y, x),
+                (-y, x),
+                (-x, y),
+                (-x, -y),
+                (-y, -x),
+                (y, -x),
+                (x, -y),
+            ):
+                if index % 2 == 0:
+                    self._put(image, center_x + offset_x, center_y + offset_y, color)
+                index += 1
+            y += 1
+            if error < 0:
+                error += 2 * y + 1
+            else:
+                x -= 1
+                error += 2 * (y - x) + 1
+
+    def _put(self, image: Any, x: int, y: int, color: tuple[int, int, int]) -> None:
+        if 0 <= x < self._width and 0 <= y < self._height:
+            image.putpixel((int(x), int(y)), color)
+
+
+def _dim(color: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+    """Scale toward black. Valid because every frame is composited on an unlit panel."""
+    scale = max(0.0, min(1.0, factor))
+    return (round(color[0] * scale), round(color[1] * scale), round(color[2] * scale))
 
 
 def _octant(bearing_degrees: float) -> int:

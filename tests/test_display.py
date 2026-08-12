@@ -15,17 +15,28 @@ from balc_flights_led.display import (
     DISPLAY_TEST,
     MINIMUM_VECTOR_ARROW,
     PLANE_SPRITE,
+    RADAR_AFTERGLOW_FLOOR,
+    RADAR_TARGET_COLOR,
     SHUTDOWN,
     SHUTDOWN_RETRIES,
     SPRITE_WIDTH,
+    TREND_COLORS,
     ConsoleRenderer,
     Hub75Renderer,
     Max7219Renderer,
     MultiRenderer,
+    _dim,
     force_max7219_off,
     open_hub75,
 )
-from balc_flights_led.presentation import ArrivalAnimation, DisplayPage, IdleAnimation, MarqueePage
+from balc_flights_led.presentation import (
+    ArrivalAnimation,
+    DisplayPage,
+    IdleAnimation,
+    MarqueePage,
+    RadarPage,
+    RadarTrack,
+)
 
 # Every settable property of rgbmatrix.RGBMatrixOptions, taken from the binding's
 # core.pyx. __slots__ makes a typo in open_hub75 an immediate AttributeError.
@@ -148,6 +159,29 @@ class DisplayTests(unittest.TestCase):
                 "[arrival] ASA123",
                 "[idle 4s]",
             ],
+        )
+
+    @patch("builtins.print")
+    def test_console_renderer_summarises_a_radar_page(self, printer) -> None:
+        renderer = ConsoleRenderer()
+
+        renderer.render(
+            RadarPage(
+                range_nautical_miles=20.0,
+                tracks=(
+                    RadarTrack("ASA123", 2.4, 135.0, trend=1, nearest=True),
+                    RadarTrack("DAL88", 9.1, 20.0),
+                ),
+                label="ASA123",
+                distance_text="2.4NM",
+                compass="SE",
+                overhead=True,
+            )
+        )
+
+        self.assertEqual(
+            printer.call_args_list[0].args[0],
+            "[radar] ASA123 | tracks=2 | 2.4NM SE | OVERHEAD",
         )
 
     def test_multi_renderer_fans_out_and_closes_every_target(self) -> None:
@@ -399,6 +433,263 @@ class Hub75LayoutTests(unittest.TestCase):
         self.assertGreater(len(panel.frames), 10)
         self.assertTrue(sleep.called)
         self.assertEqual(panel.cleared, 1)
+
+
+class Hub75RadarTests(unittest.TestCase):
+    """The radar is the reason for the panel, so its geometry is checked pixel by pixel."""
+
+    RANGE = 10.0
+
+    def renderer(self, width: int = 64, height: int = 64) -> tuple[Hub75Renderer, FakePanel]:
+        panel = FakePanel(width, height)
+        display = DisplaySettings(frame_seconds=0.01)
+        return Hub75Renderer(Hub75Settings(), display, matrix=panel), panel
+
+    def page(self, tracks: tuple[RadarTrack, ...], **overrides) -> RadarPage:
+        fields: dict[str, Any] = {
+            "range_nautical_miles": self.RANGE,
+            "tracks": tracks,
+            "label": "ASA123",
+            "detail": ("B739 5500FT", "266KT CLB"),
+            "distance_text": "5.0NM",
+            "compass": "E",
+            "trend": 1,
+            "seconds": 0.01,
+        }
+        fields.update(overrides)
+        return RadarPage(**fields)
+
+    def render(self, page: RadarPage) -> tuple[Hub75Renderer, Any]:
+        renderer, panel = self.renderer()
+        with patch("balc_flights_led.display.time.sleep"):
+            renderer.render(page)
+        return renderer, panel.frames[-1]
+
+    def pixels_matching(self, image, color: tuple[int, int, int]) -> set[tuple[int, int]]:
+        loaded = image.load()
+        return {
+            (x, y) for y in range(image.height) for x in range(image.width) if loaded[x, y] == color
+        }
+
+    def test_a_contact_lands_at_its_bearing_and_range(self) -> None:
+        track = RadarTrack("ASA123", 5.0, 90.0, trend=1)
+        renderer, image = self.render(self.page((track,)))
+
+        expected = renderer._radar_point(5.0, 90.0, self.RANGE)
+        center_x, center_y = renderer._radar_center
+        # Due east at half range: right of the origin, on its row.
+        self.assertEqual(expected, (center_x + renderer._radar_radius // 2, center_y))
+        self.assertIn(expected, self.pixels_matching(image, _dim(TREND_COLORS[1], 0.45)))
+
+    def test_every_track_in_range_is_plotted_not_just_the_nearest(self) -> None:
+        tracks = (
+            RadarTrack("ONE", 2.0, 90.0, trend=1),
+            RadarTrack("TWO", 5.0, 135.0, trend=0),
+            RadarTrack("THREE", 8.0, 180.0, trend=-1),
+        )
+        renderer, image = self.render(self.page(tracks))
+
+        for track in tracks:
+            with self.subTest(track=track.label):
+                point = renderer._radar_point(
+                    track.distance_nautical_miles,
+                    track.bearing_degrees,
+                    self.RANGE,
+                )
+                lit = self.pixels_matching(
+                    image,
+                    _dim(TREND_COLORS[track.trend], RADAR_AFTERGLOW_FLOOR),
+                )
+                self.assertIn(point, lit)
+
+    def test_vertical_rate_becomes_colour(self) -> None:
+        climbing = RadarTrack("UP", 5.0, 90.0, trend=1)
+        descending = RadarTrack("DOWN", 5.0, 180.0, trend=-1)
+        _, image = self.render(self.page((climbing, descending)))
+
+        self.assertTrue(self.pixels_matching(image, _dim(TREND_COLORS[1], RADAR_AFTERGLOW_FLOOR)))
+        self.assertTrue(self.pixels_matching(image, _dim(TREND_COLORS[-1], RADAR_AFTERGLOW_FLOOR)))
+
+    def test_traffic_beyond_the_range_ring_is_dropped(self) -> None:
+        outside = RadarTrack("FAR", self.RANGE * 2, 90.0, trend=1)
+        _, image = self.render(self.page((outside,)))
+
+        self.assertEqual(self.pixels_matching(image, _dim(TREND_COLORS[1], 0.45)), set())
+
+    def test_the_nearest_contact_gets_a_target_marker(self) -> None:
+        plain = RadarTrack("ASA123", 5.0, 90.0, trend=1)
+        renderer, without = self.render(self.page((plain,)))
+        _, with_marker = self.render(self.page((RadarTrack("ASA123", 5.0, 90.0, 1, True),)))
+
+        # Scoped to the dial: the distance readout is drawn in the same colour.
+        center_x, center_y = renderer._radar_center
+        radius = renderer._radar_radius
+        in_dial = {
+            (x, y)
+            for x in range(center_x - radius, center_x + radius + 1)
+            for y in range(center_y - radius, center_y + radius + 1)
+        }
+
+        self.assertEqual(self.pixels_matching(without, RADAR_TARGET_COLOR) & in_dial, set())
+        self.assertEqual(len(self.pixels_matching(with_marker, RADAR_TARGET_COLOR) & in_dial), 4)
+
+    def contact_ink(self, image, renderer, track, color) -> int:
+        """Pixels of a contact's own colour around its plotted point."""
+        point = renderer._radar_point(
+            track.distance_nautical_miles,
+            track.bearing_degrees,
+            self.RANGE,
+        )
+        loaded = image.load()
+        return sum(
+            1
+            for offset_x in range(-1, 3)
+            for offset_y in range(-1, 3)
+            if loaded[point[0] + offset_x, point[1] + offset_y] == color
+        )
+
+    def test_only_the_nearest_contact_gets_the_larger_dot(self) -> None:
+        nearest = RadarTrack("NEAR", 3.0, 90.0, trend=1, nearest=True)
+        other = RadarTrack("OTHER", 6.0, 180.0, trend=1)
+        renderer, image = self.render(self.page((nearest, other)))
+        color = _dim(TREND_COLORS[1], RADAR_AFTERGLOW_FLOOR)
+
+        self.assertEqual(self.contact_ink(image, renderer, nearest, color), 4)
+        self.assertEqual(self.contact_ink(image, renderer, other, color), 1)
+
+    def test_trails_are_kept_for_the_nearest_only(self) -> None:
+        nearest = RadarTrack("NEAR", 3.0, 90.0, trend=1, nearest=True)
+        other = RadarTrack("OTHER", 6.0, 180.0, trend=1)
+        renderer, panel = self.renderer()
+        page = self.page((nearest, other))
+        with patch("balc_flights_led.display.time.sleep"):
+            renderer.render(page)
+            renderer.render(page)
+
+        # A second page deep in history, and the other contact is still one pixel.
+        self.assertEqual(len(renderer._trails["NEAR"]), 2)
+        lit = self.contact_ink(
+            panel.frames[-1],
+            renderer,
+            other,
+            _dim(TREND_COLORS[1], RADAR_AFTERGLOW_FLOOR),
+        )
+        self.assertEqual(lit, 1)
+
+    def heading_block(self, image, renderer) -> tuple[tuple[int, ...], ...]:
+        loaded = image.load()
+        return tuple(
+            tuple(
+                1 if loaded[renderer._heading_left + column, row] != (0, 0, 0) else 0
+                for column in range(ARROW_WIDTH)
+            )
+            for row in range(ARROW_HEIGHT)
+        )
+
+    def expected_sprite(self, octant: int) -> tuple[tuple[int, ...], ...]:
+        return tuple(
+            tuple(1 if cell == "#" else 0 for cell in row) for row in ARROW_SPRITES[octant]
+        )
+
+    def test_the_heading_sprite_fills_the_top_right_corner(self) -> None:
+        track = RadarTrack("ASA123", 5.0, 90.0, trend=1)
+        for octant, heading in enumerate(range(0, 360, 45)):
+            with self.subTest(heading=heading):
+                renderer, image = self.render(self.page((track,), heading_degrees=heading))
+                self.assertEqual(
+                    self.heading_block(image, renderer),
+                    self.expected_sprite(octant),
+                )
+
+    def test_heading_is_the_aircraft_track_not_the_bearing_to_it(self) -> None:
+        track = RadarTrack("ASA123", 5.0, 180.0, trend=1)
+        renderer, image = self.render(self.page((track,), heading_degrees=0.0))
+
+        # Due south of us, flying north: the sprite follows the heading.
+        self.assertEqual(self.heading_block(image, renderer), self.expected_sprite(0))
+
+    def test_a_missing_heading_leaves_the_corner_dark(self) -> None:
+        track = RadarTrack("ASA123", 5.0, 90.0, trend=1)
+        renderer, image = self.render(self.page((track,), heading_degrees=None))
+
+        self.assertEqual(sum(sum(row) for row in self.heading_block(image, renderer)), 0)
+
+    def test_a_long_callsign_is_clipped_rather_than_reaching_the_sprite(self) -> None:
+        track = RadarTrack("ASA123", 5.0, 90.0, trend=1)
+        renderer, image = self.render(
+            self.page((track,), label="ABCDEFGHIJKL", heading_degrees=0.0)
+        )
+
+        self.assertEqual(self.heading_block(image, renderer), self.expected_sprite(0))
+
+    def test_the_detail_block_sits_clear_of_the_dial(self) -> None:
+        renderer, image = self.render(self.page((RadarTrack("ASA123", 5.0, 90.0),)))
+        loaded = image.load()
+        _, center_y = renderer._radar_center
+        dial_top = center_y - renderer._radar_radius
+
+        lit_rows = [
+            row
+            for row in range(image.height)
+            if any(loaded[column, row] != (0, 0, 0) for column in range(image.width))
+        ]
+        self.assertLess(min(lit_rows), dial_top)
+        # The callsign occupies the top rows and the dial reaches the bottom edge.
+        self.assertGreaterEqual(max(lit_rows), center_y)
+
+    def test_an_empty_radar_still_draws_rings_and_a_sweep(self) -> None:
+        _, image = self.render(self.page((), label="NO FLT", detail=(), distance_text=""))
+        loaded = image.load()
+
+        self.assertTrue(
+            any(
+                loaded[column, row] != (0, 0, 0)
+                for row in range(image.height)
+                for column in range(image.width)
+            )
+        )
+
+    def test_the_layout_stays_on_panel_for_every_supported_geometry(self) -> None:
+        for width, height in ((64, 64), (64, 32), (128, 64)):
+            with self.subTest(width=width, height=height):
+                panel = FakePanel(width, height)
+                renderer = Hub75Renderer(
+                    Hub75Settings(),
+                    DisplaySettings(frame_seconds=0.01),
+                    matrix=panel,
+                )
+                with patch("balc_flights_led.display.time.sleep"):
+                    renderer.render(self.page((RadarTrack("ASA123", 5.0, 90.0, 1, True),)))
+
+                center_x, center_y = renderer._radar_center
+                self.assertGreaterEqual(center_y - renderer._radar_radius, 0)
+                self.assertLess(center_y + renderer._radar_radius, height)
+                self.assertGreaterEqual(center_x - renderer._radar_radius, 0)
+                self.assertLess(center_x + renderer._radar_radius, width)
+
+    @patch("balc_flights_led.display.time.sleep")
+    def test_the_arrival_sprite_wipes_the_radar_in_behind_it(self, sleep) -> None:
+        renderer, panel = self.renderer()
+        page = self.page((RadarTrack("ASA123", 5.0, 90.0, 1, True),))
+
+        renderer.render(ArrivalAnimation("ASA123", page=page))
+        wiped = panel.frames[-1]
+        renderer.render(page)
+
+        # The sprite passes over an unlit panel, then hands over to the dial.
+        self.assertEqual(self.pixels_matching(panel.frames[0], TREND_COLORS[1]), set())
+        self.assertEqual(
+            self.pixels_matching(wiped, RADAR_TARGET_COLOR),
+            self.pixels_matching(panel.frames[-1], RADAR_TARGET_COLOR),
+        )
+
+    @patch("balc_flights_led.display.time.sleep")
+    def test_an_arrival_without_a_radar_page_still_reveals_the_callsign(self, sleep) -> None:
+        renderer, panel = self.renderer()
+
+        renderer.render(ArrivalAnimation("ASA123", bearing_degrees=90))
+
+        self.assertGreater(len(panel.frames), 10)
 
 
 class Hub75DriverTests(unittest.TestCase):

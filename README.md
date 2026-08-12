@@ -56,26 +56,66 @@ Upstream failures are not presented as quiet airspace. A recent last-known aircr
 
 ### On A HUB75 Panel
 
-A 64x64 panel is tall enough for a stacked layout instead of a single strip, so the same frames are re-laid-out rather than letterboxed. Every element scales from the reported panel size, so 64x32 and chained panels work too.
+A 64x64 panel has room for a picture rather than a readout, so it gets a
+different layout: a detail block for the nearest aircraft across the top, and
+below it a radar plotting the traffic around you.
+
+This is the headline difference between the panels. On the MAX7219 chain
+`nearest_flight()` picks one winner and the rest of the API response is
+discarded, which on a busy afternoon is dozens of aircraft thrown away per poll.
+The radar plots a chosen number of them from the same request, nearest first.
 
 ```text
-   A S A 1 2 3      callsign, scaled 2x, centred on the top band
-      /##\
-     /####\         bearing arrow, rotated to the exact bearing
-       ##
- ##########....     full-width proximity bar on the bottom rows
+ A S A 1 2 3    /|\   callsign, and the heading sprite in the corner
+ B739 5500FT     |    type and altitude
+ 266KT CLB           speed, and vertical rate as colour
+ 2.4NM        SE     distance, and compass point
+      . -- .
+   /          \      range rings at 50% and 90% of the radar range
+  |  .  +  o   |     contacts, nearest first; + is you
+   \          /      the sweep rotates, brightening each contact as it passes
+      ' -- '
 ```
 
 | Element | Where | Behaviour |
 | --- | --- | --- |
-| Callsign | Top band | Scaled up by `height / 32`, centred, clipped rather than wrapped. Amber instead of white when the data is stale. |
-| Bearing arrow | Middle band | A filled vector arrow rotated to the true bearing, sized to the largest square that fits between the callsign and the bar. Amber while overhead, cyan otherwise, and it blinks off in the overhead frames. |
-| Proximity bar | Bottom rows | Full panel width. Green, then amber, then red as the aircraft closes in. |
-| Stale marker | Top-right corner | A small amber square. |
-| Detail scroll | Vertically centred | The same detail line, scrolled at the scaled font size. |
-| Arrival animation | Full panel | The plane sprite, scaled, then the new page revealed column by column. |
+| Callsign | Top row | The nearest aircraft. Amber instead of white when the data is stale. Clipped rather than allowed to reach the heading sprite. |
+| Heading sprite | Top-right corner | Which way the aircraft is pointing, as one of eight octant sprites. Blank when the feed omits a heading. |
+| Type and altitude | Second row | Blank fields are simply omitted. |
+| Speed and trend | Third row | Coloured by vertical rate: green climbing, amber level, red descending. |
+| Distance | Fourth row, left | Cyan, or amber while the aircraft is inside the overhead radius. |
+| Compass point | Fourth row, right | The bearing, quantised to eight points for the text only. |
+| Range rings | Radar | Dashed, at 50% and 90% of `radar_range_nautical_miles`. The outermost is dimmer. |
+| Sweep | Radar | A six-spoke decaying trace at 85 degrees per second. |
+| Contacts | Radar | The nearest `radar_contacts` aircraft, at their true bearing and range, coloured by vertical rate. Brightest as the sweep crosses each one, then decaying to a floor, exactly as a PPI display behaves. |
+| Trails | Radar | The last four positions of the nearest contact, fading. Free, because positions are already recomputed every frame between polls. |
+| Target marker | Radar | A blinking cyan bracket around the nearest contact, which is also the only contact drawn 2x2 rather than as a single pixel. |
+| Arrival transition | Full width | When the nearest aircraft *changes*, a plane sprite flies past and the dial is wiped in behind it. |
 
-A 64x64 panel has room to resolve a real angle, so the bearing is not rounded into one of eight sprites the way it must be inside a single 8x8 MAX7219 block. Below a 16-pixel arrow box the vector degrades and the layout falls back to the octant sprites, so short panels still read clearly. The stacked layout assumes at least 32 rows; it stays on-panel below that, but the bands get cramped.
+The transition is the same idea as the MAX7219 arrival animation, and it exists
+for the same reason: the target marker says *which* contact is the subject, but
+nothing about a marker moving one pixel says *a different aircraft is now the
+closest one*. A full-width sprite does, and it costs about a second. Set
+`display.animations = false` to swap frames without it.
+
+**The corner sprite is heading, not bearing**, and the difference is the point of
+it. Bearing is where the aircraft sits relative to you, and the radar already
+shows that twice over: by the contact's position on the dial, and by the compass
+point next to the distance. Heading is where it is *going*, which nothing else on
+the panel can tell you. `heading_degrees` arrives on every fix and was previously
+used only for dead reckoning between polls. So an aircraft plotted south of the
+origin with a north-pointing sprite is inbound, and the same contact pointing
+south is leaving. On the MAX7219 chain the arrow means bearing instead, because
+32x8 has no room for a dial to carry it.
+
+Set `display.radar = false` to fall back to the paged callsign-and-arrow layout
+described above, which is what a panel too small for a dial should use. The
+MAX7219 chain ignores the setting entirely: 32x8 cannot hold a radar, so a radar
+frame there degrades to the callsign alone.
+
+Every dimension is derived from the reported panel size, so 64x32 and chained
+panels work; the dial simply gets smaller. Below a 16-pixel radius contacts drop
+from 2x2 to single pixels.
 
 ### Staying Current Between Polls
 
@@ -87,6 +127,7 @@ Local extrapolation honours the same 45-second ceiling the API applies to its ow
 
 A projected position is dead reckoning, not a new observation. It is the right basis for pointing an arrow, and the wrong basis for anything requiring source provenance.
 
+The poll itself runs on its own thread. A fetch costs most of a second on a healthy connection, `api.timeout_seconds` on a stalled one, and longer again if name resolution hangs, which no socket timeout bounds. Doing that on the render thread froze the panel on its last frame every interval, which on the radar reads as the sweep stopping mid-rotation. The renderer now keeps drawing from the cached feed throughout, and folds the result in on the frame it arrives.
 
 Set `display.animations = false` to suppress the arrival sprite and show content changes immediately.
 
@@ -151,7 +192,14 @@ See [MAX7219 hardware troubleshooting](docs/MAX7219_TROUBLESHOOTING.md) for the 
 
 ## HUB75 Panels
 
-`display.panel = "hub75"` drives a HUB75 RGB panel instead. The shipped defaults describe a Waveshare RGB-Matrix-P2.5-64x64 (64x64, 1/32 scan, HUB75 in and out) wired straight to the Pi GPIO header:
+`display.panel = "hub75"` drives a HUB75 RGB panel instead. This is the current
+setup, verified end to end on a Raspberry Pi 4 Model B driving a Waveshare
+RGB-Matrix-Px-64x64 straight off the GPIO header — see
+[HUB75 setup on this Pi](docs/HUB75_PI_SETUP.md) for the exact, reproducible steps.
+The MAX7219 chain the project started on is still supported and selectable.
+
+The shipped defaults describe a Waveshare RGB-Matrix-Px-64x64 (64x64, 1/32 scan,
+HUB75 in and out) wired straight to the Pi GPIO header:
 
 ```toml
 [display]
@@ -179,14 +227,36 @@ Those values map one-to-one onto `RGBMatrixOptions` in [hzeller/rpi-rgb-led-matr
 
 ### Driver Install
 
-The Python bindings are not published to PyPI, but the upstream repository is pip-installable, which builds them against the interpreter you point at it:
+The Python bindings are not published to PyPI. They are built from a source
+checkout against the interpreter you point at it, so they must go into the same
+virtualenv that runs `run.py` — a system-wide or separate-venv install will not be
+visible to the app, and `sudo` will not bridge the gap either.
+
+Waveshare ships its own fork of the driver with the panel's documentation. That
+fork is what this project is verified against:
 
 ```bash
 sudo apt install -y python3-dev cython3
+.venv/bin/python -m pip install ~/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi
+```
+
+Upstream works too if you have no local checkout:
+
+```bash
 .venv/bin/python -m pip install "git+https://github.com/hzeller/rpi-rgb-led-matrix"
 ```
 
-Install it into the same virtualenv that runs `run.py`. If it is missing, the app fails at startup with an explicit message rather than a blank panel. Upstream added Raspberry Pi 5 support recently through its RP1 backends, but the mature, well-trodden path is a Pi 4 or earlier; this project is verified on a Pi 4 Model B.
+Confirm the bindings landed in the project's own environment:
+
+```bash
+.venv/bin/python -c "import rgbmatrix; print(rgbmatrix.__file__)"
+```
+
+The path printed must be inside this project's `.venv`. If the bindings are
+missing, the app fails at startup with an explicit message rather than a blank
+panel. Upstream added Raspberry Pi 5 support recently through its RP1 backends,
+but the mature, well-trodden path is a Pi 4 or earlier; this project is verified
+on a Pi 4 Model B.
 
 ### Onboard Audio Conflicts With The Panel
 
@@ -276,6 +346,9 @@ BFL_PAGE_SECONDS
 BFL_SCROLL_DELAY
 BFL_FRAME_SECONDS
 BFL_ANIMATIONS
+BFL_RADAR
+BFL_RADAR_RANGE_NM
+BFL_RADAR_CONTACTS
 BFL_SPI_PORT
 BFL_SPI_DEVICE
 BFL_SPI_SPEED_HZ
@@ -304,6 +377,19 @@ BFL_HUB75_DROP_PRIVILEGES
 The refresh interval defaults to 20 seconds and cannot be set lower, because the public API advertises `max-age=20` and asks consumers not to poll aggressively. Positions are extrapolated locally between polls, so a longer interval costs accuracy only once the 45-second projection ceiling is reached. Aircraft reported on the ground or older than `maximum_seen_seconds` are excluded by default. `overhead_radius_nautical_miles` defaults to 1.5, must be greater than zero, and can be no larger than the search radius. Widen it and the blink stops meaning much, since a large share of Seattle traffic passes within a few miles.
 
 `scroll_delay` controls the detail marquee, `frame_seconds` controls the arrival and idle animations. Both trade smoothness against the available SPI bandwidth.
+
+`radar` selects the HUB75 radar layout and defaults to true. It also sets the
+radar's frame rate through `frame_seconds`: the sweep is redrawn every frame,
+and aircraft positions are re-derived from the cached feed every `page_seconds`.
+
+`radar_range_nautical_miles` and `radar_contacts` are what keep the dial
+legible, and they matter more than they sound. A 64x64 panel gives the radar a
+20-pixel radius. Pointed at the full 20 NM search box over Seattle that is
+roughly 40 aircraft inside 1,300 pixels, which reads as static rather than
+traffic. The defaults show the nearest 6 within 10 NM, which is the picture
+you actually look at. Set `radar_contacts = 0` for every aircraft in range, and
+`radar_range_nautical_miles = 0` to follow the search radius; the range is
+clamped to the search radius either way, since nothing beyond it was fetched.
 
 ## Run
 
@@ -389,6 +475,7 @@ On a HUB75 panel there is no cascade to count and no SPI clock to step, so `bloc
 | --- | --- |
 | `wiring` | Solid white, red, green, then blue fills. White is also the panel's worst-case current draw, so it doubles as a power-supply test. Wrong colours mean `hub75.led_rgb_sequence`; missing rows or ghosting mean `hub75.gpio_slowdown` or the supply. |
 | `visuals` | The same frame sweep, laid out for the panel. |
+| `radar` | Five synthetic contacts orbit the dial so the arrival transition, the sweep, the fading trail, the vertical-rate colours and the target marker can all be confirmed without waiting for real traffic. |
 | `off` | Clears the panel. |
 
 One further MAX7219 phase is opt-in, because it opens and closes the bus once per speed and so cannot share a device with the others:
@@ -402,6 +489,13 @@ Isolate one phase when narrowing something down, or blank a stuck display:
 ```bash
 .venv/bin/python tests/run_tests.py --matrix-only --phase wiring
 .venv/bin/python tests/run_tests.py --matrix-only --phase off
+```
+
+Every phase runs once and exits, which is what you want for a check but not for
+watching one. `--loop` repeats until Ctrl+C, and `--seconds` sets the dwell:
+
+```bash
+sudo .venv/bin/python tests/run_tests.py --matrix-only --phase radar --loop
 ```
 
 If the `wiring` phase never changes the display, stop adjusting `rotate` and
@@ -432,7 +526,7 @@ src/balc_flights_led/
   config.py        TOML + environment configuration with validation
   models.py        Coordinates, Flight, BoundingBox, NearestFlight
   selection.py     Great-circle distance, bearing, bounding box, nearest pick
-  service.py       Polling loop, staleness, and fresh/degraded/offline states
+  service.py       Off-thread polling loop, staleness, and fresh/degraded/offline states
   presentation.py  Renderer-independent frames: headline, marquee, animations
   display.py       MAX7219, HUB75, and console renderers
   cli.py           Argument parsing and entry point
@@ -452,7 +546,7 @@ Presentation is deliberately separated from rendering: `presentation.py` produce
 .venv/bin/ruff format --check .
 ```
 
-The test suite covers geodesic selection, nullable API fields, major-version rejection, invalid positions, cache-aware polling configuration, the overhead radius, arrival-animation triggering, headline/marquee page construction, fresh/degraded/offline/last-known state transitions, and both panel layouts rendered offscreen.
+The test suite covers geodesic selection, nullable API fields, major-version rejection, invalid positions, cache-aware polling configuration, the overhead radius, arrival-animation triggering, headline/marquee page construction, fresh/degraded/offline/last-known state transitions, the display continuing to draw while a poll is in flight, and both panel layouts rendered offscreen.
 
 ## API Reference
 

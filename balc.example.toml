@@ -27,6 +27,14 @@ page_seconds = 2.0
 scroll_delay = 0.04
 frame_seconds = 0.03
 animations = true
+# Plot every aircraft in range on a radar instead of paging through one at a
+# time. HUB75 only; the MAX7219 chain has nowhere to put a dial.
+radar = true
+# How much sky the dial covers. 0 follows the search radius, which squeezes the
+# whole search box into a 20-pixel radius and reads as noise.
+radar_range_nautical_miles = 10.0
+# Contacts plotted, nearest first. 0 plots every one of them.
+radar_contacts = 6
 
 # Used when display.panel = "max7219"
 [matrix]

@@ -60,6 +60,13 @@ class DisplaySettings:
     scroll_delay: float = 0.04
     frame_seconds: float = 0.03
     animations: bool = True
+    # Only a HUB75 panel has the pixels for the radar; the MAX7219 chain ignores it.
+    radar: bool = True
+    # How much sky the dial covers. 0 follows the search radius, which on a 64x64
+    # panel squeezes 20 NM into 20 pixels and reads as noise.
+    radar_range_nautical_miles: float = 10.0
+    # Contacts plotted, nearest first. 0 plots every one of them.
+    radar_contacts: int = 6
 
     def __post_init__(self) -> None:
         if self.renderer not in RENDERER_CHOICES:
@@ -77,6 +84,10 @@ class DisplaySettings:
             raise ValueError("display.scroll_delay cannot be negative")
         if self.frame_seconds <= 0:
             raise ValueError("display.frame_seconds must be greater than 0")
+        if self.radar_range_nautical_miles < 0:
+            raise ValueError("display.radar_range_nautical_miles cannot be negative")
+        if self.radar_contacts < 0:
+            raise ValueError("display.radar_contacts cannot be negative")
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +277,21 @@ def load_settings(
                 environment, "BFL_FRAME_SECONDS", display, "frame_seconds", 0.03
             ),
             animations=_bool_value(environment, "BFL_ANIMATIONS", display, "animations", True),
+            radar=_bool_value(environment, "BFL_RADAR", display, "radar", True),
+            radar_range_nautical_miles=_float_value(
+                environment,
+                "BFL_RADAR_RANGE_NM",
+                display,
+                "radar_range_nautical_miles",
+                10.0,
+            ),
+            radar_contacts=_int_value(
+                environment,
+                "BFL_RADAR_CONTACTS",
+                display,
+                "radar_contacts",
+                6,
+            ),
         ),
         matrix=MatrixSettings(
             spi_port=_int_value(environment, "BFL_SPI_PORT", matrix, "spi_port", 0),

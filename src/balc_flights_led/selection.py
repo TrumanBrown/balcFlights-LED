@@ -110,14 +110,14 @@ def estimated_position(flight: Flight, elapsed_seconds: float = 0.0) -> Coordina
     )
 
 
-def nearest_flight(
+def _eligible(
     flights: Iterable[Flight],
     origin: Coordinates,
     *,
-    include_on_ground: bool = False,
-    maximum_seen_seconds: float = 60.0,
-    elapsed_seconds: float = 0.0,
-) -> NearestFlight | None:
+    include_on_ground: bool,
+    maximum_seen_seconds: float,
+    elapsed_seconds: float,
+) -> list[NearestFlight]:
     candidates: list[NearestFlight] = []
 
     for flight in flights:
@@ -137,6 +137,54 @@ def nearest_flight(
                 bearing_degrees=initial_bearing_degrees(origin, position),
             )
         )
+
+    return candidates
+
+
+def flights_in_radius(
+    flights: Iterable[Flight],
+    origin: Coordinates,
+    radius_nautical_miles: float,
+    *,
+    include_on_ground: bool = False,
+    maximum_seen_seconds: float = 60.0,
+    elapsed_seconds: float = 0.0,
+) -> tuple[NearestFlight, ...]:
+    """Every eligible flight inside the radius, nearest first.
+
+    The radar plots all of these; `nearest_flight` picks the one the detail
+    block describes.
+    """
+    inside = [
+        candidate
+        for candidate in _eligible(
+            flights,
+            origin,
+            include_on_ground=include_on_ground,
+            maximum_seen_seconds=maximum_seen_seconds,
+            elapsed_seconds=elapsed_seconds,
+        )
+        if candidate.distance_nautical_miles <= radius_nautical_miles
+    ]
+    inside.sort(key=lambda candidate: (candidate.distance_nautical_miles, candidate.flight.label))
+    return tuple(inside)
+
+
+def nearest_flight(
+    flights: Iterable[Flight],
+    origin: Coordinates,
+    *,
+    include_on_ground: bool = False,
+    maximum_seen_seconds: float = 60.0,
+    elapsed_seconds: float = 0.0,
+) -> NearestFlight | None:
+    candidates = _eligible(
+        flights,
+        origin,
+        include_on_ground=include_on_ground,
+        maximum_seen_seconds=maximum_seen_seconds,
+        elapsed_seconds=elapsed_seconds,
+    )
 
     if not candidates:
         return None

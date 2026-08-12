@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import string
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from .models import NearestFlight
@@ -57,6 +58,8 @@ class ArrivalAnimation:
     text: str
     bearing_degrees: float | None = None
     overhead: bool = False
+    # The frame wiped in behind the sprite. None means the callsign page.
+    page: RadarPage | None = None
 
     @property
     def self_timed(self) -> bool:
@@ -74,7 +77,44 @@ class IdleAnimation:
         return True
 
 
-DisplayItem = DisplayPage | MarqueePage | ArrivalAnimation | IdleAnimation
+@dataclass(frozen=True, slots=True)
+class RadarTrack:
+    """One aircraft plotted on the radar."""
+
+    label: str
+    distance_nautical_miles: float
+    bearing_degrees: float
+    trend: int = 0
+    nearest: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class RadarPage:
+    """A PPI radar of every aircraft in range, over a detail block for the nearest.
+
+    Self-timed because the sweep animates: the renderer holds it for `seconds`
+    and the caller re-derives positions before handing over the next one.
+    """
+
+    range_nautical_miles: float
+    tracks: tuple[RadarTrack, ...] = ()
+    label: str = ""
+    detail: tuple[str, ...] = ()
+    distance_text: str = ""
+    compass: str = ""
+    trend: int = 0
+    # Where the aircraft is pointing, which the radar's position cannot show.
+    heading_degrees: float | None = None
+    stale: bool = False
+    overhead: bool = False
+    seconds: float = 0.5
+
+    @property
+    def self_timed(self) -> bool:
+        return True
+
+
+DisplayItem = DisplayPage | MarqueePage | ArrivalAnimation | IdleAnimation | RadarPage
 
 
 def flight_pages(
@@ -111,18 +151,101 @@ def flight_pages(
     return (*frames, MarqueePage(detail_line(nearest), stale=stale))
 
 
-def arrival_intro(nearest: NearestFlight, *, overhead: bool = False) -> tuple[DisplayItem, ...]:
+def arrival_intro(
+    nearest: NearestFlight,
+    *,
+    overhead: bool = False,
+    page: RadarPage | None = None,
+) -> tuple[DisplayItem, ...]:
     return (
         ArrivalAnimation(
             text=_matrix_text(nearest.flight.label),
             bearing_degrees=nearest.bearing_degrees,
             overhead=overhead,
+            page=page,
         ),
     )
 
 
 def status_pages(message: str) -> tuple[DisplayItem, ...]:
     return (DisplayPage(text=_matrix_text(message)),)
+
+
+def radar_pages(
+    nearest: NearestFlight,
+    tracked: Sequence[NearestFlight],
+    *,
+    range_nautical_miles: float,
+    limit: int = 0,
+    stale: bool = False,
+    overhead: bool = False,
+    seconds: float = 0.5,
+) -> tuple[RadarPage, ...]:
+    flight = nearest.flight
+    speed = f"{round(flight.speed_knots):d}KT" if flight.speed_knots is not None else "--KT"
+    trend = trend_value(flight.vertical_rate_fpm)
+    return (
+        RadarPage(
+            range_nautical_miles=range_nautical_miles,
+            tracks=radar_tracks(tracked, nearest=nearest, limit=limit),
+            label=_matrix_text(flight.label),
+            detail=(
+                _matrix_text(
+                    " ".join(
+                        part
+                        for part in (flight.aircraft_type, _altitude_text(flight.altitude_feet))
+                        if part
+                    )
+                ),
+                _matrix_text(f"{speed} {_trend_text(flight.vertical_rate_fpm)}"),
+            ),
+            distance_text=_distance_text(nearest.distance_nautical_miles),
+            compass=compass_point(nearest.bearing_degrees),
+            trend=trend,
+            heading_degrees=flight.heading_degrees,
+            stale=stale,
+            overhead=overhead,
+            seconds=seconds,
+        ),
+    )
+
+
+def radar_idle_pages(
+    message: str,
+    *,
+    range_nautical_miles: float,
+    seconds: float = 0.5,
+) -> tuple[RadarPage, ...]:
+    return (
+        RadarPage(
+            range_nautical_miles=range_nautical_miles,
+            label=_matrix_text(message),
+            seconds=seconds,
+        ),
+    )
+
+
+def radar_tracks(
+    tracked: Sequence[NearestFlight],
+    *,
+    nearest: NearestFlight | None = None,
+    limit: int = 0,
+) -> tuple[RadarTrack, ...]:
+    """The nearest `limit` aircraft. A 64x64 dial turns to noise much beyond a handful."""
+    nearest_label = nearest.flight.label if nearest is not None else None
+    selected = sorted(tracked, key=lambda candidate: candidate.distance_nautical_miles)
+    if limit > 0:
+        selected = selected[:limit]
+    return tuple(
+        RadarTrack(
+            label=_matrix_text(candidate.flight.label),
+            distance_nautical_miles=candidate.distance_nautical_miles,
+            bearing_degrees=candidate.bearing_degrees,
+            trend=trend_value(candidate.flight.vertical_rate_fpm),
+            nearest=candidate.flight.label == nearest_label,
+        )
+        for candidate in selected
+    )
 
 
 def idle_pages(message: str, *, seconds: float = 4.0) -> tuple[DisplayItem, ...]:

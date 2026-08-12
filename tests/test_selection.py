@@ -7,6 +7,7 @@ from balc_flights_led.selection import (
     bounds_around,
     distance_nautical_miles,
     estimated_position,
+    flights_in_radius,
     initial_bearing_degrees,
     nearest_flight,
 )
@@ -170,6 +171,73 @@ class SelectionTests(unittest.TestCase):
     def test_invalid_coordinate_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "latitude"):
             Coordinates(latitude=91, longitude=0)
+
+
+class RadiusTests(unittest.TestCase):
+    """The radar plots everything in range, so the radius query is its data source."""
+
+    def setUp(self) -> None:
+        self.origin = Coordinates(latitude=47.6175, longitude=-122.305)
+
+    def flight(self, latitude: float, callsign: str, **overrides) -> Flight:
+        return Flight(
+            position=Coordinates(latitude=latitude, longitude=-122.305),
+            callsign=callsign,
+            seen_seconds_ago=1,
+            **overrides,
+        )
+
+    def test_every_flight_inside_the_radius_is_returned_nearest_first(self) -> None:
+        tracked = flights_in_radius(
+            [
+                self.flight(47.75, "FAR"),
+                self.flight(47.63, "NEAR"),
+                self.flight(47.68, "MID"),
+            ],
+            self.origin,
+            20.0,
+        )
+
+        self.assertEqual([entry.flight.label for entry in tracked], ["NEAR", "MID", "FAR"])
+
+    def test_flights_beyond_the_radius_are_dropped(self) -> None:
+        tracked = flights_in_radius(
+            [self.flight(47.63, "NEAR"), self.flight(49.0, "OUTSIDE")],
+            self.origin,
+            20.0,
+        )
+
+        self.assertEqual([entry.flight.label for entry in tracked], ["NEAR"])
+
+    def test_ground_and_stale_traffic_is_excluded_like_the_nearest_pick(self) -> None:
+        tracked = flights_in_radius(
+            [
+                self.flight(47.63, "AIRBORNE"),
+                self.flight(47.62, "PARKED", on_ground=True),
+                Flight(
+                    position=Coordinates(47.62, -122.305),
+                    callsign="STALE",
+                    seen_seconds_ago=900,
+                ),
+            ],
+            self.origin,
+            20.0,
+        )
+
+        self.assertEqual([entry.flight.label for entry in tracked], ["AIRBORNE"])
+
+    def test_bearing_matches_the_nearest_pick_for_the_same_flight(self) -> None:
+        flights = [self.flight(47.63, "ASA123")]
+
+        tracked = flights_in_radius(flights, self.origin, 20.0)
+        picked = nearest_flight(flights, self.origin)
+
+        self.assertIsNotNone(picked)
+        self.assertAlmostEqual(tracked[0].bearing_degrees, picked.bearing_degrees)
+        self.assertAlmostEqual(
+            tracked[0].distance_nautical_miles,
+            picked.distance_nautical_miles,
+        )
 
 
 if __name__ == "__main__":
