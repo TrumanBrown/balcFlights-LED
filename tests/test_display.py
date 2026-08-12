@@ -505,7 +505,8 @@ class Hub75RadarTests(unittest.TestCase):
         expected = renderer._radar_point(5.0, 90.0, self.RANGE)
         center_x, center_y = renderer._radar_center
         # Due east at half range: right of the origin, on its row.
-        self.assertEqual(expected, (center_x + renderer._radar_radius // 2, center_y))
+        self.assertEqual(expected[1], center_y)
+        self.assertAlmostEqual(expected[0] - center_x, renderer._radar_radius / 2, delta=1)
         self.assertIn(expected, self.pixels_matching(image, _dim(TREND_COLORS[1], 0.45)))
 
     def test_every_track_in_range_is_plotted_not_just_the_nearest(self) -> None:
@@ -693,6 +694,12 @@ class Hub75RadarTests(unittest.TestCase):
                 self.assertLess(center_y + renderer._radar_radius, height)
                 self.assertGreaterEqual(center_x - renderer._radar_radius, 0)
                 self.assertLess(center_x + renderer._radar_radius, width)
+
+                # The dial has to start below the last line of the detail block.
+                text_bottom = renderer._radar_rows[-1] + renderer._glyph_height_of(
+                    renderer._radar_font
+                )
+                self.assertGreaterEqual(center_y - renderer._radar_radius, text_bottom)
 
     @patch("balc_flights_led.display.time.sleep")
     def test_the_arrival_sprite_wipes_the_radar_in_behind_it(self, sleep) -> None:

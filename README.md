@@ -67,9 +67,8 @@ The radar plots a chosen number of them from the same request, nearest first.
 
 ```text
  A S A 1 2 3    /|\   callsign, and the heading sprite in the corner
- B739 5500FT     |    type and altitude
- 266KT CLB           speed, and vertical rate as colour
- 2.4NM        SE     distance, and compass point
+ B739 5500FT     SE   type and altitude, and the compass point
+ 266KT CLB    2.4NM   speed with vertical rate as colour, and distance
       . -- .
    /          \      range rings at 50% and 90% of the radar range
   |  .  +  o   |     contacts, nearest first; + is you
@@ -79,12 +78,12 @@ The radar plots a chosen number of them from the same request, nearest first.
 
 | Element | Where | Behaviour |
 | --- | --- | --- |
-| Callsign | Top row | The nearest aircraft. Amber instead of white when the data is stale. Clipped rather than allowed to reach the heading sprite. |
+| Callsign | Top band | The nearest aircraft, at the largest whole scale that still shows it in full. Amber instead of white when the data is stale. Clipped rather than allowed to reach the heading sprite. |
 | Heading sprite | Top-right corner | Which way the aircraft is pointing, as one of eight octant sprites. Blank when the feed omits a heading. |
-| Type and altitude | Second row | Blank fields are simply omitted. |
-| Speed and trend | Third row | Coloured by vertical rate: green climbing, amber level, red descending. |
-| Distance | Fourth row, left | Cyan, or amber while the aircraft is inside the overhead radius. |
-| Compass point | Fourth row, right | The bearing, quantised to eight points for the text only. |
+| Type and altitude | Second row, left | Blank fields are simply omitted. |
+| Compass point | Second row, right | The bearing, quantised to eight points for the text only. |
+| Speed and trend | Third row, left | Coloured by vertical rate: green climbing, amber level, red descending. |
+| Distance | Third row, right | Cyan, or amber while the aircraft is inside the overhead radius. |
 | Range rings | Radar | Dashed, at 50% and 90% of `radar_range_nautical_miles`. The outermost is dimmer. |
 | Sweep | Radar | A six-spoke decaying trace at 85 degrees per second. |
 | Contacts | Radar | The nearest `radar_contacts` aircraft, at their true bearing and range, coloured by vertical rate. Brightest as the sweep crosses each one, then decaying to a floor, exactly as a PPI display behaves. |
@@ -116,6 +115,11 @@ frame there degrades to the callsign alone.
 Every dimension is derived from the reported panel size, so 64x32 and chained
 panels work; the dial simply gets smaller. Below a 16-pixel radius contacts drop
 from 2x2 to single pixels.
+
+The text block is two rows rather than four, because the compass point and the
+distance are short enough to sit right-aligned beside the lines they belong to.
+Those rows are worth more to the dial than to whitespace: on a 64x64 panel they
+take the radius from 16 pixels to 19, and on a 64x32 panel from 3 to 6.
 
 ### Staying Current Between Polls
 

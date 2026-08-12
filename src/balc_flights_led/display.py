@@ -574,15 +574,17 @@ class Hub75Renderer:
         )
 
         # Radar layout: a detail block across the top, the dial filling the rest.
+        # Two text rows, not three: the compass and the distance are short enough
+        # to sit right-aligned beside the lines they belong to, and the six rows
+        # that buys go to the dial.
         detail_height = self._glyph_height_of(self._radar_font)
         line_pitch = detail_height + 1
         first_line = headline_height + 1
-        self._radar_rows = (first_line, first_line + line_pitch, first_line + 2 * line_pitch)
-        block_height = self._radar_rows[2] + detail_height + 1
+        self._radar_rows = (first_line, first_line + line_pitch)
+        block_height = self._radar_rows[-1] + detail_height + 1
         diameter = min(self._width - 2, self._height - block_height)
         self._radar_radius = max(3, (diameter - 1) // 2)
         self._radar_center = (self._width // 2, self._height - self._radar_radius - 2)
-        self._compass_left = round(self._width * 0.6875)
         # Top-right corner, reserved for the heading sprite. The callsign is clipped
         # to clear it, exactly as it is for the arrow block on the MAX7219 chain.
         self._heading_scale = max(1, self._width // 64)
@@ -827,10 +829,11 @@ class Hub75Renderer:
     def _draw_detail_block(self, image: Any, item: RadarPage) -> None:
         available = self._heading_left - 2 if self._heading_visible else self._width - 2
         if item.label:
-            fitted = self._fit_text(item.label, self._font, available, 1)
+            scale = self._label_scale(item.label, available)
+            fitted = self._fit_text(item.label, self._font, available, scale)
             self._stamp(
                 image,
-                self._glyph_layer(fitted, self._font),
+                self._glyph_layer(fitted, self._font, scale),
                 (1, 0),
                 STALE_COLOR if item.stale else TEXT_COLOR,
             )
@@ -845,31 +848,31 @@ class Hub75Renderer:
                 ARROW_COLOR,
             )
 
-        for index, line in enumerate(item.detail[: len(self._radar_rows) - 1]):
-            if not line:
-                continue
-            self._stamp(
-                image,
-                self._glyph_layer(line, self._radar_font),
-                (1, self._radar_rows[index]),
-                TREND_COLORS[item.trend] if index else DETAIL_COLOR,
-            )
+        trailing = (
+            (item.compass, LABEL_COLOR),
+            (item.distance_text, OVERHEAD_COLOR if item.overhead else RADAR_TARGET_COLOR),
+        )
+        for index, top in enumerate(self._radar_rows):
+            text, color = trailing[index]
+            limit = self._width - 1
+            if text:
+                layer = self._glyph_layer(text, self._radar_font)
+                limit -= layer.width
+                self._stamp(image, layer, (limit, top), color)
+            line = item.detail[index] if index < len(item.detail) else ""
+            if line:
+                fitted = self._fit_text(line, self._radar_font, limit - 2, 1)
+                self._stamp(
+                    image,
+                    self._glyph_layer(fitted, self._radar_font),
+                    (1, top),
+                    TREND_COLORS[item.trend] if index else DETAIL_COLOR,
+                )
 
-        row = self._radar_rows[-1]
-        if item.distance_text:
-            self._stamp(
-                image,
-                self._glyph_layer(item.distance_text, self._radar_font),
-                (1, row),
-                OVERHEAD_COLOR if item.overhead else RADAR_TARGET_COLOR,
-            )
-        if item.compass:
-            self._stamp(
-                image,
-                self._glyph_layer(item.compass, self._radar_font),
-                (self._compass_left, row),
-                LABEL_COLOR,
-            )
+    def _label_scale(self, value: str, available: int) -> int:
+        """Largest whole scale that still shows the callsign in full."""
+        width = max(1, self._textsize(value, self._font)[0])
+        return max(1, min(self._scale, available // width))
 
     def _draw_radar(self, image: Any, item: RadarPage) -> None:
         center_x, center_y = self._radar_center
