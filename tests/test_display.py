@@ -140,6 +140,33 @@ class DisplayTests(unittest.TestCase):
         self.assertTrue(all(len(row) == SPRITE_WIDTH for row in PLANE_SPRITE))
         self.assertTrue(set("".join(PLANE_SPRITE)) <= {"#", "."})
 
+    def test_every_arrow_sprite_is_symmetric_about_its_own_axis(self) -> None:
+        """A lopsided head reads as one the panel edge has clipped."""
+        last = ARROW_HEIGHT - 1
+        reflections = {
+            0: lambda row, column: (row, ARROW_WIDTH - 1 - column),  # N
+            1: lambda row, column: (last - column, last - row),  # NE
+            2: lambda row, column: (last - row, column),  # E
+            3: lambda row, column: (column, row),  # SE
+            4: lambda row, column: (row, ARROW_WIDTH - 1 - column),  # S
+            5: lambda row, column: (last - column, last - row),  # SW
+            6: lambda row, column: (last - row, column),  # W
+            7: lambda row, column: (column, row),  # NW
+        }
+        for octant, sprite in enumerate(ARROW_SPRITES):
+            with self.subTest(octant=octant):
+                self.assertEqual(len(sprite), ARROW_HEIGHT)
+                self.assertTrue(all(len(row) == ARROW_WIDTH for row in sprite))
+
+                lit = {
+                    (row, column)
+                    for row, pattern in enumerate(sprite)
+                    for column, cell in enumerate(pattern)
+                    if cell == "#"
+                }
+                reflect = reflections[octant]
+                self.assertEqual({reflect(row, column) for row, column in lit}, lit)
+
     @patch("builtins.print")
     def test_console_renderer_handles_every_item_type(self, printer) -> None:
         renderer = ConsoleRenderer()

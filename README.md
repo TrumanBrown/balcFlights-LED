@@ -48,7 +48,7 @@ A S A 1 2 3 |>|      callsign (24px) + bearing arrow (8x8 block)
 | Arrival animation | Full width | When the nearest aircraft *changes*, a plane sprite flies past, then the new callsign is revealed column by column. |
 | Idle | Full width | Drifting dots alternating with `NO FLT` when no aircraft qualifies. |
 
-The arrow is drawn from a table of hand-designed sprites, one per compass octant, rather than by rotating a line. At eight pixels across, a rounded arbitrary-angle vector degrades into scattered dots and reads as noise, so direction is quantised to 45° and each direction gets a shape chosen to be unmistakable. That constraint is specific to an 8x8 block: on a HUB75 panel the arrow is drawn as a real rotated vector at the exact bearing.
+The arrow is drawn from a table of hand-designed sprites, one per compass octant, rather than by rotating a line. At eight pixels across, a rounded arbitrary-angle vector degrades into scattered dots and reads as noise, so direction is quantised to 45° and each direction gets a shape chosen to be unmistakable. Every sprite is a mirror image of itself about its own axis, because a lopsided head reads as one the panel edge has clipped; the diagonals are drawn inside a 7x7 square, since a 45° axis cannot be a mirror line of an 8x7 box. That constraint is specific to an 8x8 block: on a HUB75 panel the arrow is drawn as a real rotated vector at the exact bearing.
 
 Status text such as `OFFLINE` has no bearing to show, so those frames use the full 32 columns instead of reserving the arrow block.
 

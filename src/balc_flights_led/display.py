@@ -46,7 +46,11 @@ STRIP_GAP = 1
 ARROW_WIDTH = 8
 ARROW_HEIGHT = 7
 
-# Indexed by compass octant, clockwise from north.
+# Indexed by compass octant, clockwise from north. Each sprite is a mirror image
+# of itself about its own axis; a lopsided head reads as one the panel edge has
+# clipped. The diagonals therefore live in a 7x7 square, because a 45 degree axis
+# cannot be a mirror line of an 8x7 box, and their heads are drawn as two barbs
+# rather than filled, which is the only symmetric arrowhead this grid can hold.
 ARROW_SPRITES = (
     (  # N
         "...##...",
@@ -58,13 +62,13 @@ ARROW_SPRITES = (
         "...##...",
     ),
     (  # NE
-        "...#####",
-        "....####",
-        ".....###",
-        "....#...",
-        "...#....",
-        "..#.....",
+        "..#####.",
+        ".....##.",
+        "....#.#.",
+        "...#..#.",
+        "..#...#.",
         ".#......",
+        "#.......",
     ),
     (  # E
         "....#...",
@@ -76,13 +80,13 @@ ARROW_SPRITES = (
         "....#...",
     ),
     (  # SE
+        "#.......",
         ".#......",
-        "..#.....",
-        "...#....",
-        "....#...",
-        ".....###",
-        "....####",
-        "...#####",
+        "..#...#.",
+        "...#..#.",
+        "....#.#.",
+        ".....##.",
+        "..#####.",
     ),
     (  # S
         "...##...",
@@ -96,10 +100,10 @@ ARROW_SPRITES = (
     (  # SW
         "......#.",
         ".....#..",
-        "....#...",
-        "...#....",
-        "###.....",
-        "####....",
+        "#...#...",
+        "#..#....",
+        "#.#.....",
+        "##......",
         "#####...",
     ),
     (  # W
@@ -113,10 +117,10 @@ ARROW_SPRITES = (
     ),
     (  # NW
         "#####...",
-        "####....",
-        "###.....",
-        "...#....",
-        "....#...",
+        "##......",
+        "#.#.....",
+        "#..#....",
+        "#...#...",
         ".....#..",
         "......#.",
     ),
