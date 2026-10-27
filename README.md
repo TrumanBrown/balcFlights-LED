@@ -4,6 +4,10 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/downloads/)
 
+https://github.com/user-attachments/assets/f521e7aa-ca79-4756-bef7-f16d04616ba8
+
+The 64x64 HUB75 panel running the radar layout, with [seattlebalc.com](https://seattlebalc.com/) on the monitor behind it.
+
 Display the aircraft currently overhead on an LED matrix attached to a Raspberry Pi 4. Two panels are supported and either can be selected with one config line:
 
 | `display.panel` | Hardware | Geometry |
@@ -26,6 +30,7 @@ The application consumes the public, read-only [Seattle Balc Flights API](https:
 - [Hardware Checks](#hardware-checks)
 - [Project Structure](#project-structure)
 - [Tests And Quality](#tests-and-quality)
+- [API Reference](#api-reference)
 - [License](#license)
 
 ## What The Matrix Shows
@@ -241,7 +246,7 @@ fork is what this project is verified against:
 
 ```bash
 sudo apt install -y python3-dev cython3
-.venv/bin/python -m pip install ~/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi
+.venv/bin/python -m pip install /path/to/RGB-Matrix-Px-xx/example/Rasberry-Pi
 ```
 
 Upstream works too if you have no local checkout:
