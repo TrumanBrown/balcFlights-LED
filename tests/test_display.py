@@ -735,8 +735,14 @@ class Hub75DriverTests(unittest.TestCase):
         class FakeRGBMatrix:
             def __init__(self, options=None) -> None:
                 opened.append(options)
+                module.instances.append(self)
+                self.cleared = 0
+
+            def Clear(self) -> None:
+                self.cleared += 1
 
         module = types.ModuleType("rgbmatrix")
+        module.instances = []
         module.RGBMatrix = FakeRGBMatrix
         module.RGBMatrixOptions = FakeOptions
         return module, opened
@@ -748,6 +754,7 @@ class Hub75DriverTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"rgbmatrix": module}),
             patch("balc_flights_led.display._onboard_audio_loaded", return_value=False),
+            patch("balc_flights_led.display.drop_root"),
         ):
             open_hub75(settings)
 
@@ -755,7 +762,49 @@ class Hub75DriverTests(unittest.TestCase):
         self.assertEqual(options.cols, 64)
         self.assertEqual(options.brightness, 70)
         self.assertEqual(options.panel_type, "FM6126A")
-        self.assertTrue(options.drop_privileges)
+
+    def test_root_is_dropped_by_the_app_after_the_panel_opens(self) -> None:
+        module, opened = self.stub_bindings()
+
+        with (
+            patch.dict(sys.modules, {"rgbmatrix": module}),
+            patch("balc_flights_led.display._onboard_audio_loaded", return_value=False),
+            patch("balc_flights_led.display.drop_root") as drop_root,
+        ):
+            open_hub75(Hub75Settings())
+
+        # The library's own drop keeps root's groups and ignores failure.
+        self.assertFalse(opened[0].drop_privileges)
+        drop_root.assert_called_once_with()
+
+    def test_failed_drop_blanks_the_panel_and_stops(self) -> None:
+        module, _opened = self.stub_bindings()
+
+        with (
+            patch.dict(sys.modules, {"rgbmatrix": module}),
+            patch("balc_flights_led.display._onboard_audio_loaded", return_value=False),
+            patch(
+                "balc_flights_led.display.drop_root",
+                side_effect=RuntimeError("still running as root"),
+            ),
+            self.assertRaisesRegex(RuntimeError, "still running as root"),
+        ):
+            open_hub75(Hub75Settings())
+
+        self.assertEqual(module.instances[0].cleared, 1)
+
+    def test_opting_out_of_the_drop_skips_it(self) -> None:
+        module, _opened = self.stub_bindings()
+
+        with (
+            patch.dict(sys.modules, {"rgbmatrix": module}),
+            patch("balc_flights_led.display._onboard_audio_loaded", return_value=False),
+            patch("balc_flights_led.display.drop_root") as drop_root,
+            patch("balc_flights_led.display.running_as_root", return_value=False),
+        ):
+            open_hub75(Hub75Settings(drop_privileges=False))
+
+        drop_root.assert_not_called()
 
     def test_loaded_onboard_audio_is_reported_before_the_driver_exits(self) -> None:
         module, opened = self.stub_bindings()
@@ -775,6 +824,7 @@ class Hub75DriverTests(unittest.TestCase):
         with (
             patch.dict(sys.modules, {"rgbmatrix": module}),
             patch("balc_flights_led.display._onboard_audio_loaded", return_value=True),
+            patch("balc_flights_led.display.drop_root"),
         ):
             open_hub75(Hub75Settings(disable_hardware_pulsing=True))
 

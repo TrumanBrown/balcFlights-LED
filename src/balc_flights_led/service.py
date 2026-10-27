@@ -89,6 +89,13 @@ class FlightMonitor:
             feed = self._client.fetch(bounds)
         except FlightApiError as error:
             return PollResult(fetched_at=self._clock(), error=str(error))
+        except Exception as error:
+            # A hostile or broken feed must cost one poll, never the process.
+            # Only the type is reported, since the message may echo server bytes.
+            return PollResult(
+                fetched_at=self._clock(),
+                error=f"unexpected {type(error).__name__} while fetching flights",
+            )
         return PollResult(fetched_at=self._clock(), feed=feed)
 
     def apply(self, result: PollResult) -> MonitorState:

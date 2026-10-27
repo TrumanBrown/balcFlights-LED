@@ -17,10 +17,10 @@ rediscovering any of it.
 | OS | Debian 12 (bookworm), aarch64, kernel 6.12.93 |
 | Panel | Waveshare RGB-Matrix-Px-64x64, 64x64, 1/32 scan, wired straight to the GPIO header |
 | Panel power | Its own regulated 5 V supply, ground tied to Pi ground |
-| Project | `/home/truman/projects/new/balcFlights-LED` |
+| Project | `~/projects/new/balcFlights-LED` |
 | Project venv | `.venv` (Python 3.11.2) — **the one that matters** |
 | Driver | `rgbmatrix 0.0.1+20260125`, built into the project venv |
-| Driver source | `/home/truman/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi` |
+| Driver source | `~/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi` |
 
 Vendor documentation for the panel:
 <https://docs.waveshare.com/RGB-Matrix-Px-64x64/Raspberry-Pi>
@@ -34,7 +34,7 @@ against the exact interpreter that will import it.
 The Waveshare fork lives in a sibling checkout:
 
 ```
-/home/truman/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi
+~/projects/new/RGB-Matrix-Px-xx/example/Rasberry-Pi
 ```
 
 Install or reinstall it into this project's venv:
@@ -49,7 +49,7 @@ project's `.venv`:
 
 ```bash
 .venv/bin/python -c "import rgbmatrix; print(rgbmatrix.__file__)"
-# /home/truman/projects/new/balcFlights-LED/.venv/lib/python3.11/site-packages/rgbmatrix/__init__.py
+# ~/projects/new/balcFlights-LED/.venv/lib/python3.11/site-packages/rgbmatrix/__init__.py
 ```
 
 There is a second, unrelated venv at `~/.venvs/rgbmatrix`. It exists only for
@@ -72,8 +72,12 @@ To force one or the other for a single run:
 
 ```bash
 sudo .venv/bin/python run.py --panel hub75
-sudo .venv/bin/python run.py --panel max7219
+.venv/bin/python run.py --panel max7219
 ```
+
+Only the HUB75 panel needs `sudo`, and the app drops root as soon as the panel is
+open. The MAX7219 chain only needs the `spi` group, and the app refuses to run it
+as root.
 
 Console-only, no hardware touched — useful for logic work away from the Pi:
 
@@ -206,6 +210,8 @@ test of the power supply.
 | `HUB75 panels need the rpi-rgb-led-matrix Python bindings` | Same cause, reported by the app's own check |
 | `snd_bcm2835 is loaded and the HUB75 driver needs the same PWM hardware` | Set `disable_hardware_pulsing = true`, or blacklist onboard audio |
 | `Permission denied` / `Can't open /dev/mem` | Missing `sudo` |
+| `refusing to run as root` | Only the HUB75 panel needs `sudo`. Run the MAX7219 chain and the console renderer as your own user |
+| `could not drop root privileges` / `still running as root` | The app opened the panel but could not give up root, so it blanked the panel and stopped. Check that the `daemon` account exists (`id daemon`) |
 | Rows ghost, flicker, or tear | Raise `gpio_slowdown`; add `limit_refresh_rate_hz = 100`; consider `isolcpus=3` |
 | The whole picture freezes for about a second, then jumps | The API poll used to run on the render thread. Measured at 0.5-0.9 s per fetch on this Pi, so the panel held its last frame that long every interval. Fixed: the poll runs on its own thread and the renderer keeps drawing from the cached feed. If it comes back, the stall is elsewhere in the render loop |
 | The picture freezes for several seconds, occasionally much longer | Network, not the panel. `api.timeout_seconds` bounds the socket, but nothing bounds `getaddrinfo`, so a sick resolver can stall a fetch well past it. That no longer stops the display, only the data behind it; the console log shows the gap between `INFO` lines |

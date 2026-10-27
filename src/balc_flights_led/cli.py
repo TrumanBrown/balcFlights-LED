@@ -16,6 +16,7 @@ from .display import (
     PageRenderer,
     create_matrix_renderer,
 )
+from .privileges import running_as_root
 from .service import FlightMonitor, run_forever
 
 
@@ -89,9 +90,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         monitor = FlightMonitor(settings, client)
 
         if arguments.command == "once":
+            _refuse_needless_root(settings, arguments.renderer)
             return _once(monitor, settings, arguments.renderer)
         if arguments.command == "run":
             renderer_name = arguments.renderer or settings.display.renderer
+            _refuse_needless_root(settings, renderer_name)
             return _run(monitor, settings, renderer_name)
     except (OSError, RuntimeError, ValueError) as error:
         logging.getLogger(__name__).error("%s", error)
@@ -101,17 +104,29 @@ def main(argv: Sequence[str] | None = None) -> int:
     return 2
 
 
+def _refuse_needless_root(settings: Settings, renderer_name: str) -> None:
+    """Only opening a HUB75 panel needs root, and that path drops it straight after."""
+    opens_hub75 = renderer_name != "console" and settings.display.panel == "hub75"
+    if running_as_root() and not opens_hub75:
+        raise RuntimeError(
+            "refusing to run as root: only a HUB75 panel needs sudo. "
+            "For the MAX7219 chain, add your user to the 'spi' group instead"
+        )
+
+
 def _once(monitor: FlightMonitor, settings: Settings, renderer_name: str) -> int:
-    state = monitor.refresh()
-    print(state.summary, flush=True)
-    if renderer_name != "console":
-        renderer = _create_renderer(renderer_name, settings)
-        try:
+    # Open the panel first, so a HUB75 run has dropped root before any network I/O.
+    renderer = _create_renderer(renderer_name, settings) if renderer_name != "console" else None
+    try:
+        state = monitor.refresh()
+        print(state.summary, flush=True)
+        if renderer is not None:
             for item in (*state.intro, *state.pages):
                 renderer.render(item)
                 if not item.self_timed:
                     time.sleep(settings.display.page_seconds)
-        finally:
+    finally:
+        if renderer is not None:
             renderer.close()
     return 0 if state.kind in {"flight", "stale", "empty"} else 2
 

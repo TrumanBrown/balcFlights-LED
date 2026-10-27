@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import math
 import string
 import time
@@ -16,6 +17,9 @@ from .presentation import (
     RadarPage,
     RadarTrack,
 )
+from .privileges import drop_root, running_as_root
+
+LOGGER = logging.getLogger(__name__)
 
 DISPLAY_TEST = 0x0F
 SHUTDOWN = 0x0C
@@ -479,8 +483,21 @@ def open_hub75(settings: Hub75Settings) -> Any:
     options.panel_type = settings.panel_type
     options.pixel_mapper_config = settings.pixel_mapper_config
     options.disable_hardware_pulsing = settings.disable_hardware_pulsing
-    options.drop_privileges = settings.drop_privileges
-    return RGBMatrix(options=options)
+    # The library's own drop ignores failures and keeps root's groups, so it is
+    # switched off and drop_root() does the job, then checks it worked.
+    options.drop_privileges = False
+    matrix = RGBMatrix(options=options)
+    if settings.drop_privileges:
+        try:
+            drop_root()
+        except RuntimeError:
+            clear = getattr(matrix, "Clear", None)
+            if clear is not None:
+                clear()
+            raise
+    elif running_as_root():
+        LOGGER.warning("hub75.drop_privileges is false; the whole process stays root")
+    return matrix
 
 
 def _onboard_audio_loaded() -> bool:

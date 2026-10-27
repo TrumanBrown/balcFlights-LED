@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from http.client import HTTPException
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
+from urllib.parse import urlencode, urlsplit
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .models import BoundingBox, Coordinates, Flight, Projection
 
@@ -15,6 +17,17 @@ DEFAULT_ENDPOINT = "https://seattlebalc.com/api/v1/flights"
 USER_AGENT = "balcFlights-LED/0.1 (+https://github.com/TrumanBrown/balcFlights-LED)"
 # The feed is a small JSON document; anything larger is treated as hostile.
 MAXIMUM_RESPONSE_BYTES = 4 * 1024 * 1024
+# Identifiers are drawn on the panel and fitted a character at a time, so a
+# multi-megabyte callsign would stall the renderer. Real ones are under 10.
+MAXIMUM_IDENTIFIER_LENGTH = 16
+MAXIMUM_TEXT_LENGTH = 200
+MAXIMUM_WARNINGS = 10
+# Values outside these ranges are treated as missing rather than trusted, so a
+# hostile feed cannot push the dead reckoning into overflow.
+SPEED_KNOTS_RANGE = (0.0, 2000.0)
+ALTITUDE_FEET_RANGE = (-2000.0, 100_000.0)
+HEADING_DEGREES_RANGE = (0.0, 360.0)
+VERTICAL_RATE_FPM_RANGE = (-30_000.0, 30_000.0)
 
 
 class FlightApiError(RuntimeError):
@@ -23,6 +36,24 @@ class FlightApiError(RuntimeError):
 
 class FlightApiContractError(FlightApiError):
     """The server response did not match the supported public API contract."""
+
+
+class _HttpsOnlyRedirects(HTTPRedirectHandler):
+    """Follow redirects only while they stay on HTTPS."""
+
+    def redirect_request(
+        self, req: Request, fp: Any, code: int, msg: str, headers: Any, newurl: str
+    ) -> Request | None:
+        if urlsplit(newurl).scheme != "https":
+            raise FlightApiError("flight API redirected away from HTTPS; refusing to follow")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_HTTPS_OPENER = build_opener(_HttpsOnlyRedirects)
+
+
+def https_open(request: Request, *, timeout: float) -> Any:
+    return _HTTPS_OPENER.open(request, timeout=timeout)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +78,7 @@ class FlightApiClient:
         endpoint: str = DEFAULT_ENDPOINT,
         *,
         timeout_seconds: float = 10.0,
-        opener: Callable[..., Any] = urlopen,
+        opener: Callable[..., Any] = https_open,
     ) -> None:
         self._endpoint = endpoint
         self._timeout_seconds = timeout_seconds
@@ -64,18 +95,25 @@ class FlightApiClient:
 
         try:
             with self._opener(request, timeout=self._timeout_seconds) as response:
+                final_url = getattr(response, "geturl", lambda: request_url)()
+                if urlsplit(final_url).scheme != "https":
+                    raise FlightApiError("flight API response did not arrive over HTTPS")
                 body = response.read(MAXIMUM_RESPONSE_BYTES + 1)
         except HTTPError as error:
             raise FlightApiError(f"flight API returned HTTP {error.code}") from error
         except (TimeoutError, URLError, OSError) as error:
             raise FlightApiError(f"flight API request failed: {error}") from error
+        except HTTPException as error:
+            # The message can carry raw bytes from the server, so only the type is reported.
+            raise FlightApiError(f"flight API request failed: {type(error).__name__}") from error
 
         if len(body) > MAXIMUM_RESPONSE_BYTES:
             raise FlightApiContractError("flight API response exceeded the maximum accepted size")
 
         try:
             payload = json.loads(body)
-        except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        except (ValueError, RecursionError) as error:
+            # ValueError covers malformed JSON, bad UTF-8, and integers too long to convert.
             raise FlightApiContractError("flight API returned invalid JSON") from error
 
         return parse_flight_feed(payload)
@@ -107,11 +145,10 @@ def parse_flight_feed(payload: object) -> FlightFeed:
             flights.append(flight)
 
     raw_warnings = payload.get("warnings", [])
-    warnings = (
-        tuple(filter(None, (_optional_string(warning) for warning in raw_warnings)))
-        if isinstance(raw_warnings, list)
-        else ()
-    )
+    warnings: tuple[str, ...] = ()
+    if isinstance(raw_warnings, list):
+        cleaned = (_optional_string(warning) for warning in raw_warnings)
+        warnings = tuple(warning for warning in cleaned if warning)[:MAXIMUM_WARNINGS]
 
     declared_count = _optional_int(payload.get("count"))
     return FlightFeed(
@@ -149,17 +186,19 @@ def _parse_flight(value: object) -> Flight | None:
 
     return Flight(
         position=coordinates,
-        icao24=_optional_string(identifiers.get("icao24")),
-        callsign=_optional_string(identifiers.get("callsign")),
-        registration=_optional_string(identifiers.get("registration")),
+        icao24=_identifier(identifiers.get("icao24")),
+        callsign=_identifier(identifiers.get("callsign")),
+        registration=_identifier(identifiers.get("registration")),
         airline_name=_optional_string(airline.get("name")),
-        aircraft_type=_optional_string(aircraft.get("typeCode")),
-        altitude_feet=_optional_int(position.get("altitudeFeet")),
+        aircraft_type=_identifier(aircraft.get("typeCode")),
+        altitude_feet=_bounded_int(position.get("altitudeFeet"), ALTITUDE_FEET_RANGE),
         on_ground=position.get("onGround") is True,
-        speed_knots=_optional_float(movement.get("speedKnots")),
-        heading_degrees=_optional_float(movement.get("headingDegrees")),
-        vertical_rate_fpm=_optional_int(movement.get("verticalRateFeetPerMinute")),
-        seen_seconds_ago=_optional_float(signal.get("seenSecondsAgo")),
+        speed_knots=_bounded_float(movement.get("speedKnots"), SPEED_KNOTS_RANGE),
+        heading_degrees=_bounded_float(movement.get("headingDegrees"), HEADING_DEGREES_RANGE),
+        vertical_rate_fpm=_bounded_int(
+            movement.get("verticalRateFeetPerMinute"), VERTICAL_RATE_FPM_RANGE
+        ),
+        seen_seconds_ago=_non_negative(_optional_float(signal.get("seenSecondsAgo"))),
         data_source=_optional_string(signal.get("dataSource")),
         projection=_parse_projection(position.get("projected")),
     )
@@ -200,22 +239,45 @@ def _required_string(value: object, field: str) -> str:
     return result
 
 
-def _optional_string(value: object) -> str | None:
+def _optional_string(value: object, maximum_length: int = MAXIMUM_TEXT_LENGTH) -> str | None:
     if not isinstance(value, str):
         return None
     # Feed strings reach the log and the terminal, so drop control characters
     # rather than letting a callsign carry an escape sequence.
     stripped = "".join(character for character in value if character.isprintable()).strip()
-    return stripped or None
+    return stripped[:maximum_length].strip() or None
+
+
+def _identifier(value: object) -> str | None:
+    return _optional_string(value, MAXIMUM_IDENTIFIER_LENGTH)
 
 
 def _optional_float(value: object) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    number = float(value)
-    return number if number == number and abs(number) != float("inf") else None
+    try:
+        number = float(value)
+    except OverflowError:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _optional_int(value: object) -> int | None:
     number = _optional_float(value)
     return round(number) if number is not None else None
+
+
+def _bounded_float(value: object, limits: tuple[float, float]) -> float | None:
+    number = _optional_float(value)
+    if number is None or not limits[0] <= number <= limits[1]:
+        return None
+    return number
+
+
+def _bounded_int(value: object, limits: tuple[float, float]) -> int | None:
+    number = _bounded_float(value, limits)
+    return round(number) if number is not None else None
+
+
+def _non_negative(value: float | None) -> float | None:
+    return max(0.0, value) if value is not None else None

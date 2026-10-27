@@ -50,6 +50,16 @@ class ConfigTests(unittest.TestCase):
                 environ={"BFL_REFRESH_SECONDS": "10"},
             )
 
+    def test_endpoint_must_be_https_with_a_host(self) -> None:
+        for endpoint in (
+            "http://seattlebalc.com/api/v1/flights",
+            "file:///etc/passwd",
+            "https:///api/v1/flights",
+            "seattlebalc.com/api/v1/flights",
+        ):
+            with self.subTest(endpoint=endpoint), self.assertRaisesRegex(ValueError, "https"):
+                load_settings(Path("does-not-exist.toml"), environ={"BFL_API_ENDPOINT": endpoint})
+
     def test_defaults_match_public_api_center_and_known_matrix(self) -> None:
         settings = load_settings(Path("does-not-exist.toml"), environ={})
 

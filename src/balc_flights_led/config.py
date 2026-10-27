@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .api import DEFAULT_ENDPOINT
 from .models import Coordinates
@@ -39,8 +40,9 @@ class ApiSettings:
     last_known_ttl_seconds: float = 300.0
 
     def __post_init__(self) -> None:
-        if not self.endpoint.startswith("https://"):
-            raise ValueError("api.endpoint must use HTTPS")
+        endpoint = urlsplit(self.endpoint)
+        if endpoint.scheme != "https" or not endpoint.hostname:
+            raise ValueError("api.endpoint must be an https:// URL with a host")
         if self.timeout_seconds <= 0:
             raise ValueError("api.timeout_seconds must be greater than 0")
         if self.refresh_seconds < 20:

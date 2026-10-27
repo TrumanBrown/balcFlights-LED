@@ -30,6 +30,7 @@ The application consumes the public, read-only [Seattle Balc Flights API](https:
 - [Hardware Checks](#hardware-checks)
 - [Project Structure](#project-structure)
 - [Tests And Quality](#tests-and-quality)
+- [Security](#security)
 - [API Reference](#api-reference)
 - [License](#license)
 
@@ -249,11 +250,15 @@ sudo apt install -y python3-dev cython3
 .venv/bin/python -m pip install /path/to/RGB-Matrix-Px-xx/example/Rasberry-Pi
 ```
 
-Upstream works too if you have no local checkout:
+Upstream works too if you have no local checkout. The driver runs as root, so pin
+it to a reviewed commit rather than whatever the default branch holds today:
 
 ```bash
-.venv/bin/python -m pip install "git+https://github.com/hzeller/rpi-rgb-led-matrix"
+.venv/bin/python -m pip install "git+https://github.com/hzeller/rpi-rgb-led-matrix@3da7a3bdfca4637bb79ff038bc2bb26965197db5"
 ```
+
+Download the Waveshare fork only from the panel's
+[official documentation](https://docs.waveshare.com/RGB-Matrix-Px-64x64/Raspberry-Pi).
 
 Confirm the bindings landed in the project's own environment:
 
@@ -313,7 +318,7 @@ Upstream's [wiring guide](https://github.com/hzeller/rpi-rgb-led-matrix/blob/mas
 | `brightness` | Lower it to cut current draw and heat. 50 is already half power. |
 | `limit_refresh_rate_hz` | Pin the refresh rate when background load causes visible brightness fluctuation. |
 
-The driver needs root for the timing registers, so the live display is started with `sudo`. Keep `drop_privileges = true`: the library then drops back to an unprivileged user as soon as the panel is initialised, so the polling loop does not run as root.
+The driver needs root for the timing registers, so the live display is started with `sudo`. Keep `drop_privileges = true`: as soon as the panel is initialised, the app switches to the unprivileged `daemon` account, clears root's supplementary groups, sets `no_new_privs` so `sudo` cannot hand root back, and checks the result. If any root privilege is left it blanks the panel and exits, so polling and feed parsing never run as root. Nothing else needs root, and the app refuses `sudo` for the MAX7219 chain and the console renderer.
 
 ```bash
 sudo .venv/bin/python run.py --panel hub75
@@ -328,9 +333,11 @@ git clone https://github.com/TrumanBrown/balcFlights-LED.git
 cd balcFlights-LED
 python3 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
-.venv/bin/python -m pip install -e '.[dev]'
+.venv/bin/python -m pip install -e .
 cp balc.example.toml balc.local.toml
 ```
+
+On a development machine, install `'.[dev]'` instead to get pytest and ruff.
 
 `balc.local.toml`, `.venv`, and the local `reference/` tree are intentionally ignored by Git, so your own coordinates are never committed.
 
@@ -538,6 +545,7 @@ src/balc_flights_led/
   service.py       Off-thread polling loop, staleness, and fresh/degraded/offline states
   presentation.py  Renderer-independent frames: headline, marquee, animations
   display.py       MAX7219, HUB75, and console renderers
+  privileges.py    Drops and verifies root after the HUB75 panel opens
   cli.py           Argument parsing and entry point
 run.py             Convenience launcher for the live display
 tools/             Standalone hardware scripts, independent of the package
@@ -555,7 +563,17 @@ Presentation is deliberately separated from rendering: `presentation.py` produce
 .venv/bin/ruff format --check .
 ```
 
-The test suite covers geodesic selection, nullable API fields, major-version rejection, invalid positions, cache-aware polling configuration, the overhead radius, arrival-animation triggering, headline/marquee page construction, fresh/degraded/offline/last-known state transitions, the display continuing to draw while a poll is in flight, and both panel layouts rendered offscreen.
+The test suite covers geodesic selection, nullable API fields, major-version rejection, invalid positions, cache-aware polling configuration, the overhead radius, arrival-animation triggering, headline/marquee page construction, fresh/degraded/offline/last-known state transitions, the display continuing to draw while a poll is in flight, both panel layouts rendered offscreen, hostile and malformed feed responses, HTTPS-only redirects, and the root privilege drop.
+
+## Security
+
+The app runs on a home network, talks to one public API, and needs root only to open a HUB75 panel.
+
+- Root is held only while the HUB75 panel opens. The app then drops to `daemon` with no supplementary groups and `no_new_privs` set, verifies the drop, and exits if any privilege remains.
+- The feed is treated as untrusted. Requests and redirects are HTTPS only, responses are capped at 4 MiB, control characters are stripped, strings are length-capped, and out-of-range numbers are discarded. A bad response costs one poll, never the process.
+- CI runs with a read-only token and SHA-pinned actions, and checks dependencies with `pip-audit`. Dependabot, CodeQL, and secret scanning with push protection are enabled on the repository.
+
+To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## API Reference
 

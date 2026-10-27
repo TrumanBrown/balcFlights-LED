@@ -135,10 +135,13 @@ thousands of times a second. That has three consequences:
 3. **It may need the PWM peripheral**, which is the same hardware the Pi's onboard
    audio uses. That conflict is covered in [HUB75 setup](HUB75_PI_SETUP.md).
 
-The driver gives the privilege back as soon as it is done. With
+The app gives root back as soon as the panel is open. With
 `hub75.drop_privileges = true`, which is the default and what this rig uses, it
-initialises the hardware as root and then drops to an unprivileged user for the
-rest of the run. Only the setup is privileged.
+initialises the hardware as root, then switches to the unprivileged `daemon`
+account, clears root's supplementary groups, sets `no_new_privs` so setuid
+programs such as `sudo` cannot restore root, and verifies the
+result. If any root privilege remains, it blanks the panel and exits. Network
+requests and feed parsing only start after that, so only the setup is privileged.
 
 ### `sudo` And The Virtualenv
 

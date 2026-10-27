@@ -170,6 +170,19 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(state.kind, "offline")
         self.assertEqual(state.pages[0].text, "OFFLINE")
 
+    def test_an_unexpected_client_failure_costs_one_poll_not_the_process(self) -> None:
+        class BrokenClient:
+            def fetch(self, _bounds):
+                raise ValueError("\x1b[2Jraw server bytes")
+
+        monitor = FlightMonitor(self.settings, BrokenClient(), clock=self.clock)
+
+        state = monitor.refresh()
+
+        self.assertEqual(state.kind, "offline")
+        self.assertIn("ValueError", state.summary)
+        self.assertNotIn("\x1b", state.summary)
+
     def test_fresh_empty_feed_means_no_eligible_flights(self) -> None:
         monitor = FlightMonitor(
             self.settings,
